@@ -81,14 +81,17 @@ function updateMetadata(db: Database, id: string, metadata: string): void {
   }
 }
 
-function buildValidationPrompt(q: Question): string {
-  return `You are validating a trivia question. Analyze this question and provide ONLY validation tags.
-
+function buildBatchValidationPrompt(questions: Question[]): string {
+  const questionsText = questions.map((q, idx) =>
+    `QUESTION ${idx + 1} (ID: ${q.id}):
 Question: ${q.question}
 Correct Answer: ${q.answer_a}
 Wrong Answers: ${q.answer_b}, ${q.answer_c}, ${q.answer_d}
 Category: ${q.category} - ${q.subcategory}
-Difficulty: ${q.difficulty}
+Difficulty: ${q.difficulty}`
+  ).join('\n\n');
+
+  return `You are validating trivia questions. For each question below, provide ONLY validation tags on a single line.
 
 Check for these issues:
 - INCORRECT: Is answer_a actually correct?
@@ -98,13 +101,17 @@ Check for these issues:
 - OBVIOUS: Is the answer spelled out in the question?
 - OVERDETAILED-ANSWER: Does answer_a have unnecessary detail making it stand out?
 
-Respond with ONLY:
+Respond with EXACTLY ${questions.length} lines, one per question, in order:
 - "OK" if no issues found
-- Space-separated tags if issues found (e.g., "AMBIGUOUS UNCLEAR")`;
+- Space-separated tags if issues found (e.g., "AMBIGUOUS UNCLEAR")
+
+${questionsText}
+
+RESPONSES (one per line, in order):`;
 }
 
-async function validateQuestion(q: Question): Promise<string> {
-  const prompt = buildValidationPrompt(q);
+async function validateBatch(questions: Question[]): Promise<string[]> {
+  const prompt = buildBatchValidationPrompt(questions);
 
   return new Promise((resolve, reject) => {
     const gemini = spawn('gemini', ['-p', prompt]);
@@ -132,7 +139,21 @@ async function validateQuestion(q: Question): Promise<string> {
         return;
       }
 
-      resolve(response);
+      // Parse response lines
+      const lines = response.split('\n')
+        .map(line => line.trim())
+        .filter(line => line.length > 0);
+
+      if (lines.length !== questions.length) {
+        console.warn(`Warning: Expected ${questions.length} responses, got ${lines.length}`);
+        console.warn(`Response: ${response}`);
+        // Pad with OK if needed
+        while (lines.length < questions.length) {
+          lines.push('OK');
+        }
+      }
+
+      resolve(lines.slice(0, questions.length));
     });
 
     gemini.on('error', (error) => {
@@ -149,7 +170,7 @@ async function main() {
     // Test Gemini CLI is available
     console.log("Testing Gemini CLI...");
     try {
-      await validateQuestion({
+      await validateBatch([{
         id: 'test',
         question: 'Test question',
         answer_a: 'Test',
@@ -163,7 +184,7 @@ async function main() {
         external_id: '',
         imported_at: '',
         level: ''
-      });
+      }]);
       console.log("Gemini CLI is working!\n");
     } catch (error) {
       throw new Error("Gemini CLI not found or not working. Please install it first.");
@@ -183,7 +204,7 @@ async function main() {
 
     console.log(`Found ${totalCount} questions to validate\n`);
 
-    // Process batches
+    // Process batches (10 questions at a time)
     let processed = 0;
     const batchSize = 10;
 
@@ -191,20 +212,25 @@ async function main() {
       const batch = getNextBatch(db, batchSize);
       if (batch.length === 0) break;
 
-      for (const question of batch) {
-        try {
-          const result = await validateQuestion(question);
-          updateMetadata(db, question.id, result);
+      try {
+        const startTime = Date.now();
+        const results = await validateBatch(batch);
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+
+        // Update database with results
+        for (let i = 0; i < batch.length; i++) {
+          updateMetadata(db, batch[i].id, results[i]);
           processed++;
-
-          console.log(`Processed ${processed}/${totalCount} questions`);
-
-        } catch (error) {
-          console.error(`\nError validating question ${question.id}:`);
-          console.error(error instanceof Error ? error.message : String(error));
-          db.close();
-          process.exit(1);
         }
+
+        const rate = (batch.length / (Date.now() - startTime) * 1000).toFixed(1);
+        console.log(`Processed ${processed}/${totalCount} questions (batch: ${elapsed}s, ${rate} q/s)`);
+
+      } catch (error) {
+        console.error(`\nError validating batch:`);
+        console.error(error instanceof Error ? error.message : String(error));
+        db.close();
+        process.exit(1);
       }
     }
 
