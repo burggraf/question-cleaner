@@ -5,6 +5,8 @@
  * Validates questions in SQLite database using Gemini Pro 2.5
  */
 
+import { Database } from "bun:sqlite";
+
 console.log("Trivia Question Validator - Starting...");
 
 // Types
@@ -206,8 +208,6 @@ async function authenticate(): Promise<string> {
   return tokens.access_token;
 }
 
-import { Database } from "bun:sqlite";
-
 // Database types
 interface Question {
   id: string;
@@ -220,25 +220,63 @@ interface Question {
   subcategory: string;
   difficulty: string;
   metadata: string;
+  external_id: string;
+  imported_at: string;
+  level: string;
 }
 
 // Database functions
 function openDatabase(): Database {
-  const db = new Database("questions.db");
-  return db;
+  try {
+    const db = new Database("questions.db");
+    return db;
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message.includes("ENOENT") || error.message.includes("no such file")) {
+        throw new Error("Database file 'questions.db' not found. Please ensure the file exists in the current directory.");
+      }
+      if (error.message.includes("EACCES") || error.message.includes("permission")) {
+        throw new Error("Permission denied accessing 'questions.db'. Please check file permissions.");
+      }
+      throw new Error(`Failed to open database: ${error.message}`);
+    }
+    throw new Error("Failed to open database: Unknown error");
+  }
 }
 
 function getUnvalidatedCount(db: Database): number {
-  const result = db.query("SELECT COUNT(*) as count FROM questions WHERE metadata = ''").get() as { count: number };
-  return result.count;
+  try {
+    const result = db.query("SELECT COUNT(*) as count FROM questions WHERE metadata = ''").get() as { count: number };
+    return result.count;
+  } catch (error) {
+    if (error instanceof Error) {
+      throw new Error(`Failed to query unvalidated count: ${error.message}`);
+    }
+    throw new Error("Failed to query unvalidated count: Unknown error");
+  }
 }
 
 function getNextBatch(db: Database, batchSize: number): Question[] {
-  const query = db.query("SELECT * FROM questions WHERE metadata = '' LIMIT ?");
-  return query.all(batchSize) as Question[];
+  try {
+    const query = db.query("SELECT * FROM questions WHERE metadata = '' LIMIT ?");
+    return query.all(batchSize) as Question[];
+  } catch (error) {
+    if (error instanceof Error) {
+      throw new Error(`Failed to retrieve next batch of questions: ${error.message}`);
+    }
+    throw new Error("Failed to retrieve next batch of questions: Unknown error");
+  }
 }
 
 function updateMetadata(db: Database, id: string, metadata: string): void {
-  const query = db.query("UPDATE questions SET metadata = ? WHERE id = ?");
-  query.run(metadata, id);
+  try {
+    // Parameters: metadata (value to set), id (WHERE condition)
+    const query = db.query("UPDATE questions SET metadata = ? WHERE id = ?");
+    query.run(metadata, id);
+  } catch (error) {
+    if (error instanceof Error) {
+      throw new Error(`Failed to update metadata for question ${id}: ${error.message}`);
+    }
+    throw new Error(`Failed to update metadata for question ${id}: Unknown error`);
+  }
 }
