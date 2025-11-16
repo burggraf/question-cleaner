@@ -2,12 +2,12 @@
 
 /**
  * Trivia Question Validation Tool
- * Validates questions in SQLite database using Gemini Pro subscription via web interface
- * Authentication: Browser session (no API key needed)
+ * Validates questions in SQLite database using Gemini CLI
+ * Uses your Gemini Pro subscription via CLI
  */
 
 import { Database } from "bun:sqlite";
-import puppeteer from "puppeteer";
+import { spawn } from "child_process";
 
 // Database types
 interface Question {
@@ -103,80 +103,71 @@ Respond with ONLY:
 - Space-separated tags if issues found (e.g., "AMBIGUOUS UNCLEAR")`;
 }
 
-async function validateQuestion(page: any, q: Question): Promise<string> {
+async function validateQuestion(q: Question): Promise<string> {
   const prompt = buildValidationPrompt(q);
 
-  try {
-    // Find the textarea and type the prompt
-    await page.waitForSelector('div[contenteditable="true"]', { timeout: 5000 });
-    await page.click('div[contenteditable="true"]');
-    await page.keyboard.type(prompt);
+  return new Promise((resolve, reject) => {
+    const gemini = spawn('gemini', ['-p', prompt]);
 
-    // Submit (Enter key)
-    await page.keyboard.press('Enter');
+    let stdout = '';
+    let stderr = '';
 
-    // Wait for response to appear
-    await page.waitForFunction(() => {
-      const responses = document.querySelectorAll('[data-test-id="model-response"]');
-      return responses.length > 0;
-    }, { timeout: 30000 });
-
-    // Wait a bit for response to complete
-    await new Promise(resolve => setTimeout(resolve, 2000));
-
-    // Extract the response text
-    const responseText = await page.evaluate(() => {
-      const responses = document.querySelectorAll('[data-test-id="model-response"]');
-      if (responses.length > 0) {
-        const lastResponse = responses[responses.length - 1];
-        return lastResponse.textContent || '';
-      }
-      return '';
+    gemini.stdout.on('data', (data) => {
+      stdout += data.toString();
     });
 
-    if (!responseText) {
-      throw new Error("No response received from Gemini");
-    }
+    gemini.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
 
-    return responseText.trim();
+    gemini.on('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(`Gemini CLI failed: ${stderr || stdout}`));
+        return;
+      }
 
-  } catch (error) {
-    if (error instanceof Error) {
-      throw new Error(`Gemini validation failed: ${error.message}`);
-    }
-    throw new Error("Gemini validation failed: Unknown error");
-  }
+      const response = stdout.trim();
+      if (!response) {
+        reject(new Error("Empty response from Gemini CLI"));
+        return;
+      }
+
+      resolve(response);
+    });
+
+    gemini.on('error', (error) => {
+      reject(new Error(`Failed to run Gemini CLI: ${error.message}\nMake sure 'gemini' command is available.`));
+    });
+  });
 }
 
 // Main execution
 async function main() {
-  console.log("Trivia Question Validator (Using Gemini Pro Subscription)\n");
-
-  let browser;
-  let page;
+  console.log("Trivia Question Validator (Using Gemini CLI)\n");
 
   try {
-    // Launch browser
-    console.log("Launching browser...");
-    browser = await puppeteer.launch({
-      headless: false, // Keep visible so you can see it working
-      userDataDir: './gemini-session', // Persist login session
-    });
-
-    page = await browser.newPage();
-    await page.setViewport({ width: 1280, height: 800 });
-
-    // Navigate to Gemini
-    console.log("Navigating to Gemini...");
-    await page.goto('https://gemini.google.com', { waitUntil: 'networkidle2' });
-
-    // Check if already logged in or wait for manual login
-    console.log("\nPlease log in to Gemini if needed.");
-    console.log("Once you see the Gemini chat interface, the tool will start.\n");
-
-    // Wait for the chat interface to be ready
-    await page.waitForSelector('div[contenteditable="true"]', { timeout: 120000 });
-    console.log("Gemini interface ready!\n");
+    // Test Gemini CLI is available
+    console.log("Testing Gemini CLI...");
+    try {
+      await validateQuestion({
+        id: 'test',
+        question: 'Test question',
+        answer_a: 'Test',
+        answer_b: 'Test',
+        answer_c: 'Test',
+        answer_d: 'Test',
+        category: 'Test',
+        subcategory: 'Test',
+        difficulty: 'easy',
+        metadata: '',
+        external_id: '',
+        imported_at: '',
+        level: ''
+      });
+      console.log("Gemini CLI is working!\n");
+    } catch (error) {
+      throw new Error("Gemini CLI not found or not working. Please install it first.");
+    }
 
     // Open database
     console.log("Opening database...");
@@ -187,7 +178,6 @@ async function main() {
     if (totalCount === 0) {
       console.log("No questions to validate. All done!");
       db.close();
-      await browser.close();
       return;
     }
 
@@ -203,20 +193,16 @@ async function main() {
 
       for (const question of batch) {
         try {
-          const result = await validateQuestion(page, question);
+          const result = await validateQuestion(question);
           updateMetadata(db, question.id, result);
           processed++;
 
           console.log(`Processed ${processed}/${totalCount} questions`);
 
-          // Wait between questions to avoid overwhelming the interface
-          await new Promise(resolve => setTimeout(resolve, 3000));
-
         } catch (error) {
           console.error(`\nError validating question ${question.id}:`);
           console.error(error instanceof Error ? error.message : String(error));
           db.close();
-          await browser.close();
           process.exit(1);
         }
       }
@@ -224,12 +210,10 @@ async function main() {
 
     console.log(`\nComplete! Validated ${totalCount} questions`);
     db.close();
-    await browser.close();
 
   } catch (error) {
     console.error("\nFatal error:");
     console.error(error instanceof Error ? error.message : String(error));
-    if (browser) await browser.close();
     process.exit(1);
   }
 }

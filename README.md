@@ -1,30 +1,29 @@
 # Trivia Question Validator
 
-Validates trivia questions in SQLite database using your **Gemini Pro subscription** via browser automation.
+Validates trivia questions in SQLite database using the `gemini` CLI command.
 
 ## Prerequisites
 
 - **Bun** runtime installed
-- **Google account** with Gemini Pro subscription
-- **Chrome/Chromium** browser (Puppeteer will use this)
-
-## How It Works
-
-This tool automates the Gemini web interface at gemini.google.com to use your Pro subscription:
-- Opens a browser window
-- You log in to Gemini (one time)
-- Automatically sends questions and parses responses
-- Uses your unlimited Gemini Pro access (no API costs)
+- **`gemini` CLI** command available (uses your Gemini Pro subscription)
 
 ## Setup
 
-### Install Dependencies
+### 1. Install Dependencies
 
 ```bash
 bun install
 ```
 
-That's it! No API keys, no gcloud setup, no OAuth configuration needed.
+### 2. Verify Gemini CLI Works
+
+Test that the `gemini` command works:
+
+```bash
+gemini -p "Hello"
+```
+
+If this works, you're all set! The tool will use this same command.
 
 ## Usage
 
@@ -32,17 +31,12 @@ That's it! No API keys, no gcloud setup, no OAuth configuration needed.
 bun run validate-questions.ts
 ```
 
-### What Happens
-
-1. **Browser launches** - You'll see a Chrome window open
-2. **Log in** - If it's your first run, log in to Gemini with your Pro account
-3. **Wait for interface** - Once you see the Gemini chat, processing starts automatically
-4. **Watch it work** - The browser will type questions and get responses
-5. **Progress updates** - Terminal shows progress after each question
-
-### Session Persistence
-
-Your login session is saved in `./gemini-session/` directory, so you only need to log in once.
+The tool will:
+1. Test the `gemini` CLI is working
+2. Connect to the SQLite database
+3. Process questions one at a time using `gemini -p "<prompt>"`
+4. Update the `metadata` field with validation results
+5. Show progress after each question
 
 ## Database Schema
 
@@ -70,7 +64,6 @@ CREATE TABLE questions (
 - `AMBIGUOUS` - Question is too ambiguous
 - `INCOMPLETE` - Question is incomplete
 - `UNCLEAR` - Question is unclear
-- `UNCLEAR` - Question is unclear
 - `OBVIOUS` - Answer is in the question
 - `OVERDETAILED-ANSWER` - Correct answer has too much detail
 
@@ -79,48 +72,34 @@ Multiple tags can appear space-separated.
 ## Output
 
 ```
-Trivia Question Validator (Using Gemini Pro Subscription)
+Trivia Question Validator (Using Gemini CLI)
 
-Launching browser...
-Navigating to Gemini...
-
-Please log in to Gemini if needed.
-Once you see the Gemini chat interface, the tool will start.
-
-Gemini interface ready!
+Testing Gemini CLI...
+Gemini CLI is working!
 
 Opening database...
 Found 61251 questions to validate
 
 Processed 1/61251 questions
 Processed 2/61251 questions
+Processed 3/61251 questions
 ...
 ```
 
 ## Performance
 
-- **Speed:** ~3-5 seconds per question (slower than API but unlimited with Pro)
-- **Cost:** $0 (uses your Pro subscription)
-- **Time for 61,251 questions:** ~48-85 hours total runtime
-- **Can be interrupted:** Safe to stop and resume anytime
-
-## Tips
-
-- **Keep the browser window visible** - Don't minimize it
-- **Don't interact with the browser** - Let it run automatically
-- **Safe to pause:** Press Ctrl+C anytime and resume later
-- **Progress is saved:** Each question is saved to database immediately
+- **Speed:** Depends on `gemini` CLI response time
+- **Cost:** Uses your Gemini Pro subscription (no additional API costs)
+- **Safe to interrupt:** Press Ctrl+C anytime and resume later
+- **Progress saved:** Each question is saved immediately after validation
 
 ## Troubleshooting
 
-### Browser doesn't open
-Make sure you have Chrome or Chromium installed. Puppeteer will download Chromium if needed.
-
-### "Timeout waiting for chat interface"
-Log in manually if the tool doesn't detect you're logged in. Once you see the chat input box, it will continue.
+### "Failed to run Gemini CLI: command not found"
+The `gemini` command is not in your PATH. Make sure it's installed and accessible.
 
 ### "Database file not found"
 Ensure `questions.db` exists in the current directory where you're running the command.
 
-### Session expired
-Delete the `./gemini-session/` directory and run again to log in fresh.
+### Gemini CLI returns errors
+Check that your Gemini Pro subscription is active and you're logged in to the CLI.
