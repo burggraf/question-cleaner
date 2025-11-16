@@ -23,10 +23,16 @@ interface OAuthTokens {
 
 // Constants
 const TOKEN_FILE = ".gemini-auth.json";
-const OAUTH_CLIENT_ID = "YOUR_CLIENT_ID"; // TODO: Replace with actual client ID
-const OAUTH_CLIENT_SECRET = "YOUR_CLIENT_SECRET"; // TODO: Replace with actual secret
+const OAUTH_CLIENT_ID = process.env.GEMINI_OAUTH_CLIENT_ID || "";
+const OAUTH_CLIENT_SECRET = process.env.GEMINI_OAUTH_CLIENT_SECRET || "";
 const OAUTH_REDIRECT_URI = "http://localhost:8080/oauth2callback";
 const OAUTH_SCOPES = "https://www.googleapis.com/auth/generative-language";
+
+if (!OAUTH_CLIENT_ID || !OAUTH_CLIENT_SECRET) {
+  console.error("Error: GEMINI_OAUTH_CLIENT_ID and GEMINI_OAUTH_CLIENT_SECRET environment variables must be set");
+  console.error("See README.md for setup instructions");
+  process.exit(1);
+}
 
 // Token storage functions
 async function loadTokenStorage(): Promise<TokenStorage | null> {

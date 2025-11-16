@@ -22,9 +22,14 @@ Validates trivia questions in SQLite database using Google's Gemini Pro 2.5 mode
 
 ### 2. Configure Application
 
-Edit `validate-questions.ts` and replace:
-- `OAUTH_CLIENT_ID` with your client ID
-- `OAUTH_CLIENT_SECRET` with your client secret
+Set environment variables with your OAuth credentials:
+
+```bash
+export GEMINI_OAUTH_CLIENT_ID="your_client_id"
+export GEMINI_OAUTH_CLIENT_SECRET="your_client_secret"
+```
+
+For persistent configuration, add these to your shell profile (e.g., `~/.zshrc` or `~/.bashrc`).
 
 ### 3. Install Dependencies
 
