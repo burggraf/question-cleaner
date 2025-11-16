@@ -2,215 +2,12 @@
 
 /**
  * Trivia Question Validation Tool
- * Validates questions in SQLite database using Gemini Pro 2.5
+ * Validates questions in SQLite database using Gemini 2.0 Flash
+ * Authentication: Google Cloud CLI (gcloud)
  */
 
 import { Database } from "bun:sqlite";
-
-// Types
-interface TokenStorage {
-  refresh_token: string;
-  token_type: string;
-  created_at: string;
-}
-
-interface OAuthTokens {
-  access_token: string;
-  refresh_token: string;
-  expires_in: number;
-  token_type: string;
-}
-
-// Constants
-const TOKEN_FILE = ".gemini-auth.json";
-const OAUTH_CLIENT_ID = process.env.GEMINI_OAUTH_CLIENT_ID || "";
-const OAUTH_CLIENT_SECRET = process.env.GEMINI_OAUTH_CLIENT_SECRET || "";
-const OAUTH_REDIRECT_URI = "http://localhost:8080/oauth2callback";
-const OAUTH_SCOPES = "https://www.googleapis.com/auth/generative-language";
-
-if (!OAUTH_CLIENT_ID || !OAUTH_CLIENT_SECRET) {
-  console.error("Error: GEMINI_OAUTH_CLIENT_ID and GEMINI_OAUTH_CLIENT_SECRET environment variables must be set");
-  console.error("See README.md for setup instructions");
-  process.exit(1);
-}
-
-// Token storage functions
-async function loadTokenStorage(): Promise<TokenStorage | null> {
-  try {
-    const file = Bun.file(TOKEN_FILE);
-    if (!(await file.exists())) return null;
-    return JSON.parse(await file.text());
-  } catch {
-    return null;
-  }
-}
-
-async function saveTokenStorage(tokens: TokenStorage): Promise<void> {
-  await Bun.write(TOKEN_FILE, JSON.stringify(tokens, null, 2));
-}
-
-function deleteTokenStorage(): void {
-  try {
-    const fs = require("fs");
-    fs.unlinkSync(TOKEN_FILE);
-  } catch {
-    // File doesn't exist, ignore
-  }
-}
-
-// OAuth2 helper functions
-function startLocalServer(): Promise<{ server: any; codePromise: Promise<string> }> {
-  let resolveCode!: (code: string) => void;
-  let rejectCode!: (error: Error) => void;
-  const codePromise = new Promise<string>((resolve, reject) => {
-    resolveCode = resolve;
-    rejectCode = reject;
-  });
-
-  let server;
-  try {
-    server = Bun.serve({
-      port: 8080,
-      async fetch(req) {
-        const url = new URL(req.url);
-        if (url.pathname === "/oauth2callback") {
-          const error = url.searchParams.get("error");
-          if (error) {
-            const errorDescription = url.searchParams.get("error_description") || "No description provided";
-            rejectCode(new Error(`OAuth error: ${error} - ${errorDescription}`));
-            return new Response(`Authentication failed: ${error}`, { status: 400 });
-          }
-
-          const code = url.searchParams.get("code");
-          if (code) {
-            resolveCode(code);
-            return new Response("Authentication successful! You can close this window.", {
-              headers: { "Content-Type": "text/html" },
-            });
-          }
-          return new Response("Authentication failed - no code received", { status: 400 });
-        }
-        return new Response("Not found", { status: 404 });
-      },
-    });
-  } catch (error) {
-    throw new Error(`Failed to start local server on port 8080. Is the port already in use? ${error}`);
-  }
-
-  return Promise.resolve({ server, codePromise });
-}
-
-async function exchangeCodeForTokens(code: string): Promise<OAuthTokens> {
-  const response = await fetch("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      code,
-      client_id: OAUTH_CLIENT_ID,
-      client_secret: OAUTH_CLIENT_SECRET,
-      redirect_uri: OAUTH_REDIRECT_URI,
-      grant_type: "authorization_code",
-    }),
-  });
-
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Token exchange failed: ${error}`);
-  }
-
-  const data = await response.json();
-
-  // Validate token response structure
-  if (!data.access_token || !data.refresh_token || !data.expires_in) {
-    throw new Error("Invalid token response: missing required fields (access_token, refresh_token, or expires_in)");
-  }
-
-  return data;
-}
-
-async function refreshAccessToken(refreshToken: string): Promise<string> {
-  const response = await fetch("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      refresh_token: refreshToken,
-      client_id: OAUTH_CLIENT_ID,
-      client_secret: OAUTH_CLIENT_SECRET,
-      grant_type: "refresh_token",
-    }),
-  });
-
-  if (!response.ok) {
-    const errorBody = await response.text();
-    throw new Error(`Refresh token expired or invalid (status ${response.status}): ${errorBody}`);
-  }
-
-  const data = await response.json();
-
-  // Validate token response structure
-  if (!data.access_token) {
-    throw new Error("Invalid refresh token response: missing access_token");
-  }
-
-  return data.access_token;
-}
-
-async function authenticate(): Promise<string> {
-  // Check for existing token
-  const stored = await loadTokenStorage();
-  if (stored) {
-    console.log("Found existing authentication...");
-    try {
-      const accessToken = await refreshAccessToken(stored.refresh_token);
-      console.log("Authentication refreshed successfully");
-      return accessToken;
-    } catch (error) {
-      console.log("Refresh failed, re-authenticating...");
-      deleteTokenStorage();
-    }
-  }
-
-  // Start OAuth flow
-  console.log("Starting OAuth2 authentication...");
-  const { server, codePromise } = await startLocalServer();
-
-  const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
-  authUrl.searchParams.set("client_id", OAUTH_CLIENT_ID);
-  authUrl.searchParams.set("redirect_uri", OAUTH_REDIRECT_URI);
-  authUrl.searchParams.set("response_type", "code");
-  authUrl.searchParams.set("scope", OAUTH_SCOPES);
-  authUrl.searchParams.set("access_type", "offline");
-  authUrl.searchParams.set("prompt", "consent");
-
-  console.log(`\nPlease authenticate in your browser:`);
-  console.log(authUrl.toString());
-  console.log("\nOpening browser...\n");
-
-  // Open browser (macOS)
-  Bun.spawn(["open", authUrl.toString()]);
-
-  // Wait for callback and ensure server is stopped even if token exchange fails
-  let code: string;
-  try {
-    code = await codePromise;
-  } finally {
-    server.stop();
-  }
-
-  // Exchange code for tokens
-  console.log("Exchanging authorization code for tokens...");
-  const tokens = await exchangeCodeForTokens(code);
-
-  // Save refresh token
-  await saveTokenStorage({
-    refresh_token: tokens.refresh_token,
-    token_type: tokens.token_type,
-    created_at: new Date().toISOString(),
-  });
-
-  console.log("Authentication successful!\n");
-  return tokens.access_token;
-}
+import { GoogleAuth } from "google-auth-library";
 
 // Database types
 interface Question {
@@ -227,6 +24,38 @@ interface Question {
   external_id: string;
   imported_at: string;
   level: string;
+}
+
+// Authentication function using gcloud credentials
+async function authenticate(): Promise<string> {
+  console.log("Authenticating with Google Cloud credentials...");
+
+  try {
+    const auth = new GoogleAuth({
+      scopes: ['https://www.googleapis.com/auth/generative-language']
+    });
+
+    const client = await auth.getClient();
+    const accessToken = await client.getAccessToken();
+
+    if (!accessToken.token) {
+      throw new Error("Failed to obtain access token from gcloud credentials");
+    }
+
+    console.log("Authentication successful!\n");
+    return accessToken.token;
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message.includes("Could not load the default credentials")) {
+        throw new Error(
+          "Google Cloud credentials not found.\n" +
+          "Please run: gcloud auth application-default login --scopes=https://www.googleapis.com/auth/generative-language,https://www.googleapis.com/auth/cloud-platform"
+        );
+      }
+      throw new Error(`Authentication failed: ${error.message}`);
+    }
+    throw new Error("Authentication failed: Unknown error");
+  }
 }
 
 // Database functions
@@ -370,10 +199,8 @@ async function main() {
   console.log("Trivia Question Validator\n");
 
   try {
-    // Authenticate
-    let accessToken = await authenticate();
-    let tokenObtainedAt = Date.now();
-    const TOKEN_EXPIRY_MS = 55 * 60 * 1000; // 55 minutes
+    // Authenticate with gcloud
+    const accessToken = await authenticate();
 
     // Open database
     console.log("Opening database...");
@@ -396,16 +223,6 @@ async function main() {
     while (true) {
       const batch = getNextBatch(db, batchSize);
       if (batch.length === 0) break;
-
-      // Refresh token if approaching expiration
-      if (Date.now() - tokenObtainedAt > TOKEN_EXPIRY_MS) {
-        console.log("Refreshing access token...");
-        const stored = await loadTokenStorage();
-        if (stored) {
-          accessToken = await refreshAccessToken(stored.refresh_token);
-          tokenObtainedAt = Date.now();
-        }
-      }
 
       for (const question of batch) {
         try {
