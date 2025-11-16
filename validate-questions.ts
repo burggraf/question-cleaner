@@ -280,3 +280,66 @@ function updateMetadata(db: Database, id: string, metadata: string): void {
     throw new Error(`Failed to update metadata for question ${id}: Unknown error`);
   }
 }
+
+// Gemini API
+const GEMINI_API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent";
+
+function buildValidationPrompt(q: Question): string {
+  return `You are validating a trivia question. Analyze this question and provide ONLY validation tags.
+
+Question: ${q.question}
+Correct Answer: ${q.answer_a}
+Wrong Answers: ${q.answer_b}, ${q.answer_c}, ${q.answer_d}
+Category: ${q.category} - ${q.subcategory}
+Difficulty: ${q.difficulty}
+
+Check for these issues:
+- INCORRECT: Is answer_a actually correct?
+- AMBIGUOUS: Is the question too ambiguous?
+- INCOMPLETE: Is the question incomplete?
+- UNCLEAR: Is the question unclear to average American adults?
+- OBVIOUS: Is the answer spelled out in the question?
+- OVERDETAILED-ANSWER: Does answer_a have unnecessary detail making it stand out?
+
+Respond with ONLY:
+- "OK" if no issues found
+- Space-separated tags if issues found (e.g., "AMBIGUOUS UNCLEAR")`;
+}
+
+async function validateQuestion(q: Question, accessToken: string): Promise<string> {
+  const prompt = buildValidationPrompt(q);
+
+  const response = await fetch(GEMINI_API_ENDPOINT, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      contents: [{
+        parts: [{
+          text: prompt
+        }]
+      }],
+      generationConfig: {
+        temperature: 0.1,
+        maxOutputTokens: 50,
+      }
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Gemini API error: ${response.status} - ${error}`);
+  }
+
+  const data = await response.json();
+
+  // Extract text from response
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) {
+    throw new Error("Invalid response format from Gemini");
+  }
+
+  return text.trim();
+}
