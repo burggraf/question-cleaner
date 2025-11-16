@@ -365,7 +365,9 @@ async function main() {
 
   try {
     // Authenticate
-    const accessToken = await authenticate();
+    let accessToken = await authenticate();
+    let tokenObtainedAt = Date.now();
+    const TOKEN_EXPIRY_MS = 55 * 60 * 1000; // 55 minutes
 
     // Open database
     console.log("Opening database...");
@@ -389,11 +391,24 @@ async function main() {
       const batch = getNextBatch(db, batchSize);
       if (batch.length === 0) break;
 
+      // Refresh token if approaching expiration
+      if (Date.now() - tokenObtainedAt > TOKEN_EXPIRY_MS) {
+        console.log("Refreshing access token...");
+        const stored = await loadTokenStorage();
+        if (stored) {
+          accessToken = await refreshAccessToken(stored.refresh_token);
+          tokenObtainedAt = Date.now();
+        }
+      }
+
       for (const question of batch) {
         try {
           const result = await validateQuestion(question, accessToken);
           updateMetadata(db, question.id, result);
           processed++;
+
+          // Rate limiting: 100ms delay between API requests
+          await new Promise(resolve => setTimeout(resolve, 100));
         } catch (error) {
           console.error(`\nError validating question ${question.id}:`);
           console.error(error instanceof Error ? error.message : String(error));
