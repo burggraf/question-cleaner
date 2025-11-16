@@ -5,67 +5,29 @@ Validates trivia questions in SQLite database using Google's Gemini 2.0 Flash mo
 ## Prerequisites
 
 - **Bun** runtime installed
-- **Google Cloud CLI (gcloud)** installed
-- **Google account** with Gemini Pro subscription (or access to Gemini API)
-- **Google Cloud Project** (free tier works)
+- **Google Gemini API key** (free tier available)
 
 ## Setup
 
-### 1. Install Google Cloud CLI
+### 1. Get Your Gemini API Key
 
-**macOS:**
-```bash
-brew install google-cloud-sdk
-```
+1. Go to [Google AI Studio](https://aistudio.google.com/app/apikey)
+2. Click "Get API Key" or "Create API Key"
+3. Copy your API key
 
-**Linux:**
-```bash
-curl https://sdk.cloud.google.com | bash
-exec -l $SHELL
-```
-
-**Windows:**
-Download from: https://cloud.google.com/sdk/docs/install
-
-Verify installation:
-```bash
-gcloud --version
-```
-
-### 2. Authenticate with gcloud
-
-Run this command and log in with your Google account:
+### 2. Set Environment Variable
 
 ```bash
-gcloud auth application-default login --scopes=https://www.googleapis.com/auth/generative-language,https://www.googleapis.com/auth/cloud-platform
+export GEMINI_API_KEY="your-api-key-here"
 ```
 
-This will:
-1. Open your browser
-2. Ask you to log in with your Google account (use the one with Gemini access)
-3. Grant permissions
-4. Save credentials locally at `~/.config/gcloud/application_default_credentials.json`
-
-### 3. Set up Google Cloud Project
-
+For permanent setup, add to your shell profile (`~/.zshrc` or `~/.bashrc`):
 ```bash
-# List existing projects
-gcloud projects list
-
-# If you don't have one, create it (choose a unique project ID):
-gcloud projects create my-gemini-validator --name="Gemini Validator"
-
-# Set as default
-gcloud config set project my-gemini-validator
+echo 'export GEMINI_API_KEY="your-api-key-here"' >> ~/.zshrc
+source ~/.zshrc
 ```
 
-### 4. Enable the Generative Language API
-
-```bash
-gcloud services enable generativelanguage.googleapis.com
-```
-
-### 5. Install Dependencies
+### 3. Install Dependencies
 
 ```bash
 bun install
@@ -78,11 +40,10 @@ bun run validate-questions.ts
 ```
 
 The tool will:
-1. Authenticate using your gcloud credentials (no browser needed after initial setup)
-2. Connect to the SQLite database
-3. Process questions in batches of 10
-4. Update the `metadata` field with validation results
-5. Show progress after each batch
+1. Connect to the SQLite database
+2. Process questions in batches of 10
+3. Update the `metadata` field with validation results
+4. Show progress after each batch
 
 ## Database Schema
 
@@ -120,9 +81,6 @@ Multiple tags can appear space-separated.
 ```
 Trivia Question Validator
 
-Authenticating with Google Cloud credentials...
-Authentication successful!
-
 Opening database...
 Found 61251 questions to validate
 
@@ -137,16 +95,10 @@ Complete! Validated 61251 questions
 
 ## Troubleshooting
 
-### "Google Cloud credentials not found"
-Run the gcloud authentication command:
+### "GEMINI_API_KEY environment variable must be set"
+Set your API key:
 ```bash
-gcloud auth application-default login --scopes=https://www.googleapis.com/auth/generative-language,https://www.googleapis.com/auth/cloud-platform
-```
-
-### "Request had insufficient authentication scopes"
-Your credentials don't have the right scopes. Re-run the auth command with the scopes parameter:
-```bash
-gcloud auth application-default login --scopes=https://www.googleapis.com/auth/generative-language,https://www.googleapis.com/auth/cloud-platform
+export GEMINI_API_KEY="your-api-key-here"
 ```
 
 ### "Database file not found"
@@ -154,3 +106,10 @@ Ensure `questions.db` exists in the current directory where you're running the c
 
 ### "Permission denied accessing database"
 Check file permissions: `chmod 644 questions.db`
+
+### Rate Limiting
+The tool includes 100ms delays between API requests. If you hit rate limits, the Gemini API free tier allows:
+- 15 requests per minute for gemini-2.0-flash-exp
+- 1500 requests per day
+
+For higher limits, consider upgrading to a paid plan.

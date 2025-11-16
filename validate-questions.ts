@@ -7,7 +7,16 @@
  */
 
 import { Database } from "bun:sqlite";
-import { GoogleAuth } from "google-auth-library";
+
+// Get API key from environment
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
+
+if (!GEMINI_API_KEY) {
+  console.error("Error: GEMINI_API_KEY environment variable must be set");
+  console.error("Get your API key from: https://aistudio.google.com/app/apikey");
+  console.error("Then run: export GEMINI_API_KEY='your-api-key-here'");
+  process.exit(1);
+}
 
 // Database types
 interface Question {
@@ -26,37 +35,6 @@ interface Question {
   level: string;
 }
 
-// Authentication function using gcloud credentials
-async function authenticate(): Promise<string> {
-  console.log("Authenticating with Google Cloud credentials...");
-
-  try {
-    const auth = new GoogleAuth({
-      scopes: ['https://www.googleapis.com/auth/generative-language']
-    });
-
-    const client = await auth.getClient();
-    const accessToken = await client.getAccessToken();
-
-    if (!accessToken.token) {
-      throw new Error("Failed to obtain access token from gcloud credentials");
-    }
-
-    console.log("Authentication successful!\n");
-    return accessToken.token;
-  } catch (error) {
-    if (error instanceof Error) {
-      if (error.message.includes("Could not load the default credentials")) {
-        throw new Error(
-          "Google Cloud credentials not found.\n" +
-          "Please run: gcloud auth application-default login --scopes=https://www.googleapis.com/auth/generative-language,https://www.googleapis.com/auth/cloud-platform"
-        );
-      }
-      throw new Error(`Authentication failed: ${error.message}`);
-    }
-    throw new Error("Authentication failed: Unknown error");
-  }
-}
 
 // Database functions
 function openDatabase(): Database {
@@ -115,7 +93,8 @@ function updateMetadata(db: Database, id: string, metadata: string): void {
 }
 
 // Gemini API
-const GEMINI_API_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent";
+const GEMINI_MODEL = "gemini-2.0-flash-exp";
+const GEMINI_API_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
 
 function buildValidationPrompt(q: Question): string {
   return `You are validating a trivia question. Analyze this question and provide ONLY validation tags.
@@ -139,13 +118,12 @@ Respond with ONLY:
 - Space-separated tags if issues found (e.g., "AMBIGUOUS UNCLEAR")`;
 }
 
-async function validateQuestion(q: Question, accessToken: string): Promise<string> {
+async function validateQuestion(q: Question): Promise<string> {
   const prompt = buildValidationPrompt(q);
 
   const response = await fetch(GEMINI_API_ENDPOINT, {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${accessToken}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
@@ -199,9 +177,6 @@ async function main() {
   console.log("Trivia Question Validator\n");
 
   try {
-    // Authenticate with gcloud
-    const accessToken = await authenticate();
-
     // Open database
     console.log("Opening database...");
     const db = openDatabase();
@@ -226,7 +201,7 @@ async function main() {
 
       for (const question of batch) {
         try {
-          const result = await validateQuestion(question, accessToken);
+          const result = await validateQuestion(question);
           updateMetadata(db, question.id, result);
           processed++;
 
