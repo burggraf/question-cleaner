@@ -7,8 +7,6 @@
 
 import { Database } from "bun:sqlite";
 
-console.log("Trivia Question Validator - Starting...");
-
 // Types
 interface TokenStorage {
   refresh_token: string;
@@ -360,3 +358,62 @@ async function validateQuestion(q: Question, accessToken: string): Promise<strin
 
   return text.trim();
 }
+
+// Main execution
+async function main() {
+  console.log("Trivia Question Validator\n");
+
+  try {
+    // Authenticate
+    const accessToken = await authenticate();
+
+    // Open database
+    console.log("Opening database...");
+    const db = openDatabase();
+
+    // Get total count
+    const totalCount = getUnvalidatedCount(db);
+    if (totalCount === 0) {
+      console.log("No questions to validate. All done!");
+      db.close();
+      return;
+    }
+
+    console.log(`Found ${totalCount} questions to validate\n`);
+
+    // Process batches
+    let processed = 0;
+    const batchSize = 10;
+
+    while (true) {
+      const batch = getNextBatch(db, batchSize);
+      if (batch.length === 0) break;
+
+      for (const question of batch) {
+        try {
+          const result = await validateQuestion(question, accessToken);
+          updateMetadata(db, question.id, result);
+          processed++;
+        } catch (error) {
+          console.error(`\nError validating question ${question.id}:`);
+          console.error(error instanceof Error ? error.message : String(error));
+          db.close();
+          process.exit(1);
+        }
+      }
+
+      console.log(`Processed ${processed}/${totalCount} questions`);
+    }
+
+    console.log(`\nComplete! Validated ${totalCount} questions`);
+    db.close();
+
+  } catch (error) {
+    console.error("\nFatal error:");
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
+}
+
+// Run
+main();
