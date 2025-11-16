@@ -27,16 +27,40 @@ If this works, you're all set! The tool will use this same command.
 
 ## Usage
 
+### Single Worker
+
 ```bash
 bun run validate-questions.ts
 ```
 
-The tool will:
+### Parallel Processing (Recommended)
+
+For faster processing, run multiple workers in parallel:
+
+```bash
+# Run 3 workers in parallel (recommended for 4-core machines)
+bun run validate-questions.ts --worker-id=1 &
+bun run validate-questions.ts --worker-id=2 &
+bun run validate-questions.ts --worker-id=3 &
+```
+
+Each worker will:
 1. Test the `gemini` CLI is working
 2. Connect to the SQLite database
-3. Process questions one at a time using `gemini -p "<prompt>"`
-4. Update the `metadata` field with validation results
-5. Show progress after each question
+3. Atomically claim batches of 25 questions (no collision)
+4. Process each batch using `gemini -p "<prompt>"`
+5. Update the `metadata` field with validation results
+6. Show progress after each batch
+
+### Recovery from Interruptions
+
+If workers are interrupted (Ctrl+C, crash, etc.), questions may be stuck in `PROCESSING` state. Use the `--reclaim` flag to reset them:
+
+```bash
+bun run validate-questions.ts --reclaim
+```
+
+This will mark all `PROCESSING` questions as unprocessed so they can be claimed again.
 
 ## Database Schema
 
@@ -88,10 +112,12 @@ Processed 3/61251 questions
 
 ## Performance
 
-- **Speed:** Depends on `gemini` CLI response time
+- **Speed:** ~1.7 seconds per question with batch processing (25 questions per CLI call)
+- **Parallel Processing:** 3-4 workers can reduce total time from 29 hours to ~7-10 hours
 - **Cost:** Uses your Gemini Pro subscription (no additional API costs)
-- **Safe to interrupt:** Press Ctrl+C anytime and resume later
-- **Progress saved:** Each question is saved immediately after validation
+- **Safe to interrupt:** Press Ctrl+C anytime and resume later (use `--reclaim` to reset stuck questions)
+- **Progress saved:** Each batch is saved immediately after validation
+- **No collisions:** Workers atomically claim batches using database transactions
 
 ## Troubleshooting
 

@@ -57,15 +57,30 @@ function getUnvalidatedCount(db: Database): number {
   }
 }
 
-function getNextBatch(db: Database, batchSize: number): Question[] {
+function claimNextBatch(db: Database, batchSize: number, workerId: string): Question[] {
   try {
+    // Atomically claim a batch by marking as PROCESSING
+    db.exec("BEGIN IMMEDIATE TRANSACTION");
+
     const query = db.query("SELECT * FROM questions WHERE metadata = '' LIMIT ?");
-    return query.all(batchSize) as Question[];
-  } catch (error) {
-    if (error instanceof Error) {
-      throw new Error(`Failed to retrieve next batch of questions: ${error.message}`);
+    const batch = query.all(batchSize) as Question[];
+
+    if (batch.length > 0) {
+      const ids = batch.map(q => `'${q.id}'`).join(',');
+      db.exec(`UPDATE questions SET metadata = 'PROCESSING:${workerId}' WHERE id IN (${ids})`);
     }
-    throw new Error("Failed to retrieve next batch of questions: Unknown error");
+
+    db.exec("COMMIT");
+    return batch;
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK");
+    } catch {}
+
+    if (error instanceof Error) {
+      throw new Error(`Failed to claim next batch: ${error.message}`);
+    }
+    throw new Error("Failed to claim next batch: Unknown error");
   }
 }
 
@@ -164,9 +179,26 @@ async function validateBatch(questions: Question[]): Promise<string[]> {
 
 // Main execution
 async function main() {
-  console.log("Trivia Question Validator (Using Gemini CLI)\n");
+  // Parse command line arguments
+  const args = process.argv.slice(2);
+  const workerIdArg = args.find(arg => arg.startsWith('--worker-id='));
+  const reclaimArg = args.includes('--reclaim');
+  const workerId = workerIdArg ? workerIdArg.split('=')[1] : '1';
+
+  console.log(`Trivia Question Validator (Using Gemini CLI) - Worker ${workerId}\n`);
 
   try {
+    // Open database
+    console.log("Opening database...");
+    const db = openDatabase();
+
+    // Reclaim stuck PROCESSING questions if requested
+    if (reclaimArg) {
+      console.log("Reclaiming stuck PROCESSING questions...");
+      const reclaimed = db.exec("UPDATE questions SET metadata = '' WHERE metadata LIKE 'PROCESSING:%'");
+      console.log(`Reclaimed questions, ready to process\n`);
+    }
+
     // Test Gemini CLI is available
     console.log("Testing Gemini CLI...");
     try {
@@ -187,12 +219,9 @@ async function main() {
       }]);
       console.log("Gemini CLI is working!\n");
     } catch (error) {
+      db.close();
       throw new Error("Gemini CLI not found or not working. Please install it first.");
     }
-
-    // Open database
-    console.log("Opening database...");
-    const db = openDatabase();
 
     // Get total count
     const totalCount = getUnvalidatedCount(db);
@@ -204,12 +233,12 @@ async function main() {
 
     console.log(`Found ${totalCount} questions to validate\n`);
 
-    // Process batches (10 questions at a time)
+    // Process batches (25 questions at a time for better throughput)
     let processed = 0;
-    const batchSize = 10;
+    const batchSize = 25;
 
     while (true) {
-      const batch = getNextBatch(db, batchSize);
+      const batch = claimNextBatch(db, batchSize, workerId);
       if (batch.length === 0) break;
 
       try {
@@ -224,17 +253,17 @@ async function main() {
         }
 
         const rate = (batch.length / (Date.now() - startTime) * 1000).toFixed(1);
-        console.log(`Processed ${processed}/${totalCount} questions (batch: ${elapsed}s, ${rate} q/s)`);
+        console.log(`[Worker ${workerId}] Processed ${processed}/${totalCount} questions (batch: ${elapsed}s, ${rate} q/s)`);
 
       } catch (error) {
-        console.error(`\nError validating batch:`);
+        console.error(`\n[Worker ${workerId}] Error validating batch:`);
         console.error(error instanceof Error ? error.message : String(error));
         db.close();
         process.exit(1);
       }
     }
 
-    console.log(`\nComplete! Validated ${totalCount} questions`);
+    console.log(`\n[Worker ${workerId}] Complete! Validated ${processed} questions`);
     db.close();
 
   } catch (error) {
