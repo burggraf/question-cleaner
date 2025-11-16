@@ -2,21 +2,12 @@
 
 /**
  * Trivia Question Validation Tool
- * Validates questions in SQLite database using Gemini 2.0 Flash
- * Authentication: Google Cloud CLI (gcloud)
+ * Validates questions in SQLite database using Gemini Pro subscription via web interface
+ * Authentication: Browser session (no API key needed)
  */
 
 import { Database } from "bun:sqlite";
-
-// Get API key from environment
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
-
-if (!GEMINI_API_KEY) {
-  console.error("Error: GEMINI_API_KEY environment variable must be set");
-  console.error("Get your API key from: https://aistudio.google.com/app/apikey");
-  console.error("Then run: export GEMINI_API_KEY='your-api-key-here'");
-  process.exit(1);
-}
+import puppeteer from "puppeteer";
 
 // Database types
 interface Question {
@@ -34,7 +25,6 @@ interface Question {
   imported_at: string;
   level: string;
 }
-
 
 // Database functions
 function openDatabase(): Database {
@@ -81,7 +71,6 @@ function getNextBatch(db: Database, batchSize: number): Question[] {
 
 function updateMetadata(db: Database, id: string, metadata: string): void {
   try {
-    // Parameters: metadata (value to set), id (WHERE condition)
     const query = db.query("UPDATE questions SET metadata = ? WHERE id = ?");
     query.run(metadata, id);
   } catch (error) {
@@ -91,10 +80,6 @@ function updateMetadata(db: Database, id: string, metadata: string): void {
     throw new Error(`Failed to update metadata for question ${id}: Unknown error`);
   }
 }
-
-// Gemini API
-const GEMINI_MODEL = "gemini-2.0-flash-exp";
-const GEMINI_API_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
 
 function buildValidationPrompt(q: Question): string {
   return `You are validating a trivia question. Analyze this question and provide ONLY validation tags.
@@ -118,65 +103,81 @@ Respond with ONLY:
 - Space-separated tags if issues found (e.g., "AMBIGUOUS UNCLEAR")`;
 }
 
-async function validateQuestion(q: Question): Promise<string> {
+async function validateQuestion(page: any, q: Question): Promise<string> {
   const prompt = buildValidationPrompt(q);
 
-  const response = await fetch(GEMINI_API_ENDPOINT, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      contents: [{
-        parts: [{
-          text: prompt
-        }]
-      }],
-      generationConfig: {
-        temperature: 0.1,
-        maxOutputTokens: 50,
+  try {
+    // Find the textarea and type the prompt
+    await page.waitForSelector('div[contenteditable="true"]', { timeout: 5000 });
+    await page.click('div[contenteditable="true"]');
+    await page.keyboard.type(prompt);
+
+    // Submit (Enter key)
+    await page.keyboard.press('Enter');
+
+    // Wait for response to appear
+    await page.waitForFunction(() => {
+      const responses = document.querySelectorAll('[data-test-id="model-response"]');
+      return responses.length > 0;
+    }, { timeout: 30000 });
+
+    // Wait a bit for response to complete
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
+    // Extract the response text
+    const responseText = await page.evaluate(() => {
+      const responses = document.querySelectorAll('[data-test-id="model-response"]');
+      if (responses.length > 0) {
+        const lastResponse = responses[responses.length - 1];
+        return lastResponse.textContent || '';
       }
-    }),
-  });
+      return '';
+    });
 
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Gemini API error: ${response.status} - ${error}`);
+    if (!responseText) {
+      throw new Error("No response received from Gemini");
+    }
+
+    return responseText.trim();
+
+  } catch (error) {
+    if (error instanceof Error) {
+      throw new Error(`Gemini validation failed: ${error.message}`);
+    }
+    throw new Error("Gemini validation failed: Unknown error");
   }
-
-  const data = await response.json();
-
-  // Validate response structure
-  if (!data.candidates || data.candidates.length === 0) {
-    throw new Error("Gemini API returned no candidates (possible safety filter block)");
-  }
-
-  const candidate = data.candidates[0];
-
-  // Check for safety filter blocks
-  if (candidate.finishReason === "SAFETY") {
-    throw new Error("Content blocked by Gemini safety filters");
-  }
-
-  // Check for recitation concerns
-  if (candidate.finishReason === "RECITATION") {
-    throw new Error("Content blocked due to recitation concerns");
-  }
-
-  // Extract text from response
-  const text = candidate.content?.parts?.[0]?.text;
-  if (!text) {
-    throw new Error(`Invalid response format from Gemini (finishReason: ${candidate.finishReason})`);
-  }
-
-  return text.trim();
 }
 
 // Main execution
 async function main() {
-  console.log("Trivia Question Validator\n");
+  console.log("Trivia Question Validator (Using Gemini Pro Subscription)\n");
+
+  let browser;
+  let page;
 
   try {
+    // Launch browser
+    console.log("Launching browser...");
+    browser = await puppeteer.launch({
+      headless: false, // Keep visible so you can see it working
+      userDataDir: './gemini-session', // Persist login session
+    });
+
+    page = await browser.newPage();
+    await page.setViewport({ width: 1280, height: 800 });
+
+    // Navigate to Gemini
+    console.log("Navigating to Gemini...");
+    await page.goto('https://gemini.google.com', { waitUntil: 'networkidle2' });
+
+    // Check if already logged in or wait for manual login
+    console.log("\nPlease log in to Gemini if needed.");
+    console.log("Once you see the Gemini chat interface, the tool will start.\n");
+
+    // Wait for the chat interface to be ready
+    await page.waitForSelector('div[contenteditable="true"]', { timeout: 120000 });
+    console.log("Gemini interface ready!\n");
+
     // Open database
     console.log("Opening database...");
     const db = openDatabase();
@@ -186,6 +187,7 @@ async function main() {
     if (totalCount === 0) {
       console.log("No questions to validate. All done!");
       db.close();
+      await browser.close();
       return;
     }
 
@@ -201,29 +203,33 @@ async function main() {
 
       for (const question of batch) {
         try {
-          const result = await validateQuestion(question);
+          const result = await validateQuestion(page, question);
           updateMetadata(db, question.id, result);
           processed++;
 
-          // Rate limiting: 100ms delay between API requests
-          await new Promise(resolve => setTimeout(resolve, 100));
+          console.log(`Processed ${processed}/${totalCount} questions`);
+
+          // Wait between questions to avoid overwhelming the interface
+          await new Promise(resolve => setTimeout(resolve, 3000));
+
         } catch (error) {
           console.error(`\nError validating question ${question.id}:`);
           console.error(error instanceof Error ? error.message : String(error));
           db.close();
+          await browser.close();
           process.exit(1);
         }
       }
-
-      console.log(`Processed ${processed}/${totalCount} questions`);
     }
 
     console.log(`\nComplete! Validated ${totalCount} questions`);
     db.close();
+    await browser.close();
 
   } catch (error) {
     console.error("\nFatal error:");
     console.error(error instanceof Error ? error.message : String(error));
+    if (browser) await browser.close();
     process.exit(1);
   }
 }

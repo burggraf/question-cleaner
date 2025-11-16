@@ -1,37 +1,30 @@
 # Trivia Question Validator
 
-Validates trivia questions in SQLite database using Google's Gemini 2.0 Flash model.
+Validates trivia questions in SQLite database using your **Gemini Pro subscription** via browser automation.
 
 ## Prerequisites
 
 - **Bun** runtime installed
-- **Google Gemini API key** (free tier available)
+- **Google account** with Gemini Pro subscription
+- **Chrome/Chromium** browser (Puppeteer will use this)
+
+## How It Works
+
+This tool automates the Gemini web interface at gemini.google.com to use your Pro subscription:
+- Opens a browser window
+- You log in to Gemini (one time)
+- Automatically sends questions and parses responses
+- Uses your unlimited Gemini Pro access (no API costs)
 
 ## Setup
 
-### 1. Get Your Gemini API Key
-
-1. Go to [Google AI Studio](https://aistudio.google.com/app/apikey)
-2. Click "Get API Key" or "Create API Key"
-3. Copy your API key
-
-### 2. Set Environment Variable
-
-```bash
-export GEMINI_API_KEY="your-api-key-here"
-```
-
-For permanent setup, add to your shell profile (`~/.zshrc` or `~/.bashrc`):
-```bash
-echo 'export GEMINI_API_KEY="your-api-key-here"' >> ~/.zshrc
-source ~/.zshrc
-```
-
-### 3. Install Dependencies
+### Install Dependencies
 
 ```bash
 bun install
 ```
+
+That's it! No API keys, no gcloud setup, no OAuth configuration needed.
 
 ## Usage
 
@@ -39,11 +32,17 @@ bun install
 bun run validate-questions.ts
 ```
 
-The tool will:
-1. Connect to the SQLite database
-2. Process questions in batches of 10
-3. Update the `metadata` field with validation results
-4. Show progress after each batch
+### What Happens
+
+1. **Browser launches** - You'll see a Chrome window open
+2. **Log in** - If it's your first run, log in to Gemini with your Pro account
+3. **Wait for interface** - Once you see the Gemini chat, processing starts automatically
+4. **Watch it work** - The browser will type questions and get responses
+5. **Progress updates** - Terminal shows progress after each question
+
+### Session Persistence
+
+Your login session is saved in `./gemini-session/` directory, so you only need to log in once.
 
 ## Database Schema
 
@@ -71,6 +70,7 @@ CREATE TABLE questions (
 - `AMBIGUOUS` - Question is too ambiguous
 - `INCOMPLETE` - Question is incomplete
 - `UNCLEAR` - Question is unclear
+- `UNCLEAR` - Question is unclear
 - `OBVIOUS` - Answer is in the question
 - `OVERDETAILED-ANSWER` - Correct answer has too much detail
 
@@ -79,37 +79,48 @@ Multiple tags can appear space-separated.
 ## Output
 
 ```
-Trivia Question Validator
+Trivia Question Validator (Using Gemini Pro Subscription)
+
+Launching browser...
+Navigating to Gemini...
+
+Please log in to Gemini if needed.
+Once you see the Gemini chat interface, the tool will start.
+
+Gemini interface ready!
 
 Opening database...
 Found 61251 questions to validate
 
-Processed 10/61251 questions
-Processed 20/61251 questions
-Processed 30/61251 questions
+Processed 1/61251 questions
+Processed 2/61251 questions
 ...
-Processed 61251/61251 questions
-
-Complete! Validated 61251 questions
 ```
+
+## Performance
+
+- **Speed:** ~3-5 seconds per question (slower than API but unlimited with Pro)
+- **Cost:** $0 (uses your Pro subscription)
+- **Time for 61,251 questions:** ~48-85 hours total runtime
+- **Can be interrupted:** Safe to stop and resume anytime
+
+## Tips
+
+- **Keep the browser window visible** - Don't minimize it
+- **Don't interact with the browser** - Let it run automatically
+- **Safe to pause:** Press Ctrl+C anytime and resume later
+- **Progress is saved:** Each question is saved to database immediately
 
 ## Troubleshooting
 
-### "GEMINI_API_KEY environment variable must be set"
-Set your API key:
-```bash
-export GEMINI_API_KEY="your-api-key-here"
-```
+### Browser doesn't open
+Make sure you have Chrome or Chromium installed. Puppeteer will download Chromium if needed.
+
+### "Timeout waiting for chat interface"
+Log in manually if the tool doesn't detect you're logged in. Once you see the chat input box, it will continue.
 
 ### "Database file not found"
 Ensure `questions.db` exists in the current directory where you're running the command.
 
-### "Permission denied accessing database"
-Check file permissions: `chmod 644 questions.db`
-
-### Rate Limiting
-The tool includes 100ms delays between API requests. If you hit rate limits, the Gemini API free tier allows:
-- 15 requests per minute for gemini-2.0-flash-exp
-- 1500 requests per day
-
-For higher limits, consider upgrading to a paid plan.
+### Session expired
+Delete the `./gemini-session/` directory and run again to log in fresh.
