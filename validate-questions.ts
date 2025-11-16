@@ -54,28 +54,42 @@ function deleteTokenStorage(): void {
 
 // OAuth2 helper functions
 function startLocalServer(): Promise<{ server: any; codePromise: Promise<string> }> {
-  let resolveCode: (code: string) => void;
-  const codePromise = new Promise<string>((resolve) => {
+  let resolveCode!: (code: string) => void;
+  let rejectCode!: (error: Error) => void;
+  const codePromise = new Promise<string>((resolve, reject) => {
     resolveCode = resolve;
+    rejectCode = reject;
   });
 
-  const server = Bun.serve({
-    port: 8080,
-    async fetch(req) {
-      const url = new URL(req.url);
-      if (url.pathname === "/oauth2callback") {
-        const code = url.searchParams.get("code");
-        if (code) {
-          resolveCode(code);
-          return new Response("Authentication successful! You can close this window.", {
-            headers: { "Content-Type": "text/html" },
-          });
+  let server;
+  try {
+    server = Bun.serve({
+      port: 8080,
+      async fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname === "/oauth2callback") {
+          const error = url.searchParams.get("error");
+          if (error) {
+            const errorDescription = url.searchParams.get("error_description") || "No description provided";
+            rejectCode(new Error(`OAuth error: ${error} - ${errorDescription}`));
+            return new Response(`Authentication failed: ${error}`, { status: 400 });
+          }
+
+          const code = url.searchParams.get("code");
+          if (code) {
+            resolveCode(code);
+            return new Response("Authentication successful! You can close this window.", {
+              headers: { "Content-Type": "text/html" },
+            });
+          }
+          return new Response("Authentication failed - no code received", { status: 400 });
         }
-        return new Response("Authentication failed - no code received", { status: 400 });
-      }
-      return new Response("Not found", { status: 404 });
-    },
-  });
+        return new Response("Not found", { status: 404 });
+      },
+    });
+  } catch (error) {
+    throw new Error(`Failed to start local server on port 8080. Is the port already in use? ${error}`);
+  }
 
   return Promise.resolve({ server, codePromise });
 }
@@ -98,7 +112,14 @@ async function exchangeCodeForTokens(code: string): Promise<OAuthTokens> {
     throw new Error(`Token exchange failed: ${error}`);
   }
 
-  return await response.json();
+  const data = await response.json();
+
+  // Validate token response structure
+  if (!data.access_token || !data.refresh_token || !data.expires_in) {
+    throw new Error("Invalid token response: missing required fields (access_token, refresh_token, or expires_in)");
+  }
+
+  return data;
 }
 
 async function refreshAccessToken(refreshToken: string): Promise<string> {
@@ -114,10 +135,17 @@ async function refreshAccessToken(refreshToken: string): Promise<string> {
   });
 
   if (!response.ok) {
-    throw new Error("Refresh token expired or invalid");
+    const errorBody = await response.text();
+    throw new Error(`Refresh token expired or invalid (status ${response.status}): ${errorBody}`);
   }
 
   const data = await response.json();
+
+  // Validate token response structure
+  if (!data.access_token) {
+    throw new Error("Invalid refresh token response: missing access_token");
+  }
+
   return data.access_token;
 }
 
@@ -155,9 +183,13 @@ async function authenticate(): Promise<string> {
   // Open browser (macOS)
   Bun.spawn(["open", authUrl.toString()]);
 
-  // Wait for callback
-  const code = await codePromise;
-  server.stop();
+  // Wait for callback and ensure server is stopped even if token exchange fails
+  let code: string;
+  try {
+    code = await codePromise;
+  } finally {
+    server.stop();
+  }
 
   // Exchange code for tokens
   console.log("Exchanging authorization code for tokens...");
