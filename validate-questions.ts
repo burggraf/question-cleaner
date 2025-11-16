@@ -205,3 +205,40 @@ async function authenticate(): Promise<string> {
   console.log("Authentication successful!\n");
   return tokens.access_token;
 }
+
+import { Database } from "bun:sqlite";
+
+// Database types
+interface Question {
+  id: string;
+  question: string;
+  answer_a: string;
+  answer_b: string;
+  answer_c: string;
+  answer_d: string;
+  category: string;
+  subcategory: string;
+  difficulty: string;
+  metadata: string;
+}
+
+// Database functions
+function openDatabase(): Database {
+  const db = new Database("questions.db");
+  return db;
+}
+
+function getUnvalidatedCount(db: Database): number {
+  const result = db.query("SELECT COUNT(*) as count FROM questions WHERE metadata = ''").get() as { count: number };
+  return result.count;
+}
+
+function getNextBatch(db: Database, batchSize: number): Question[] {
+  const query = db.query("SELECT * FROM questions WHERE metadata = '' LIMIT ?");
+  return query.all(batchSize) as Question[];
+}
+
+function updateMetadata(db: Database, id: string, metadata: string): void {
+  const query = db.query("UPDATE questions SET metadata = ? WHERE id = ?");
+  query.run(metadata, id);
+}
