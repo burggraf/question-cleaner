@@ -15,6 +15,9 @@ export class QuestionProcessor {
   private logger: Logger;
   private progress: ProgressTracker | null = null;
   private stopSignal: boolean = false;
+  private consecutive503Errors: number = 0;
+  private readonly MAX_503_RETRIES = 10;
+  private readonly RETRY_DELAY_MS = 30000; // 30 seconds
 
   constructor(private config: Config) {
     this.database = new Database(config.dbPath);
@@ -118,11 +121,38 @@ export class QuestionProcessor {
           this.db.updateBatch(sanitized, 'completed');
           this.progress!.completeBatch(workerId, batch.length);
           this.displayProgress();
+
+          // Reset 503 error counter on successful processing
+          this.consecutive503Errors = 0;
         }
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
 
-        // Check for fatal errors
+        // Check for 503 Service Unavailable (model overloaded)
+        if (errorMessage.includes('503')) {
+          this.consecutive503Errors++;
+          console.log(`\n\nWarning (Worker ${workerId}): Service overloaded (503). Retry ${this.consecutive503Errors}/${this.MAX_503_RETRIES}`);
+
+          if (this.consecutive503Errors >= this.MAX_503_RETRIES) {
+            console.error(`\n\nFATAL ERROR: Received 503 errors ${this.MAX_503_RETRIES} times in a row. Stopping.\n`);
+            this.logger.logError(this.progress!.getBatchNumber(), questionIds, errorMessage);
+            this.stopSignal = true;
+            process.exit(1);
+          }
+
+          // Log the error and mark batch as failed (will be retried)
+          this.logger.logError(this.progress!.getBatchNumber(), questionIds, errorMessage);
+          this.db.markBatchFailed(questionIds);
+          this.progress!.failBatch(workerId);
+          this.displayProgress();
+
+          // Pause for 30 seconds before continuing
+          console.log(`Pausing for 30 seconds before retrying...\n`);
+          await this.sleep(this.RETRY_DELAY_MS);
+          continue; // Skip the normal delay and continue to next batch
+        }
+
+        // Check for other fatal errors
         if (this.isFatalError(errorMessage)) {
           console.error(`\n\nFATAL ERROR (Worker ${workerId}): ${errorMessage}`);
           console.error('Stopping all workers due to infrastructure issue.\n');
@@ -148,6 +178,11 @@ export class QuestionProcessor {
   }
 
   private isFatalError(errorMessage: string): boolean {
+    // 503 errors are handled separately with retry logic
+    if (errorMessage.includes('503')) {
+      return false;
+    }
+
     return (
       errorMessage.includes('429') ||
       (errorMessage.includes('status') && /5\d{2}/.test(errorMessage)) ||
