@@ -52,7 +52,11 @@ QUESTIONS:
     }
     cleaned = cleaned.trim();
 
-    return JSON.parse(cleaned);
+    const parsed = JSON.parse(cleaned);
+    if (!Array.isArray(parsed)) {
+      throw new Error('Expected JSON array from Gemini, got: ' + typeof parsed);
+    }
+    return parsed;
   }
 
   async processBatch(questions: Question[]): Promise<ProcessedQuestion[]> {
