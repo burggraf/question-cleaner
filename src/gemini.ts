@@ -1,7 +1,7 @@
 import type { Question, ProcessedQuestion } from './types';
 
 export class GeminiClient {
-  private apiUrl = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
+  private apiUrl = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent';
 
   constructor(private apiKey: string) {}
 
