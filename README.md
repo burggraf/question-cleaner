@@ -1,6 +1,6 @@
 # Jeopardy Questions Processor
 
-Transforms Jeopardy questions into multiple-choice format using Gemini 2.0 Flash API.
+Transforms Jeopardy questions into multiple-choice format using Gemini 2.5 Flash API with parallel processing.
 
 ## Setup
 
@@ -18,24 +18,29 @@ Transforms Jeopardy questions into multiple-choice format using Gemini 2.0 Flash
 
 ## Usage
 
-Process all questions:
+**Default (5 parallel workers):**
 ```bash
 bun start
 ```
 
-Test with first 10 batches (1000 questions):
+**Test with 2 workers and 5 batches:**
 ```bash
-bun start --limit 10
+bun start --workers 2 --limit 5
 ```
 
-Custom database path:
+**High throughput (requires paid API tier):**
 ```bash
-bun start --db /path/to/database.db
+bun start --workers 10 --delay 6000
 ```
 
-Custom batch size:
+**All options:**
 ```bash
-bun start --batch-size 50
+bun start \
+  --workers 5 \           # Parallel workers (default: 5)
+  --batch-size 100 \      # Questions per batch (default: 100)
+  --delay 3000 \          # Milliseconds between batches (default: 3000)
+  --limit 10 \            # Max batches to process (optional)
+  --db ./jeopardy.db      # Database path (default: ./jeopardy.db)
 ```
 
 ## Testing
@@ -52,27 +57,43 @@ bun test
 
 ## How It Works
 
-1. Queries database for questions with empty b, c, d fields
-2. Processes in batches of 100 questions
-3. Sends each batch to Gemini 2.0 Flash API
-4. Validates responses (unique options, no empties, valid JSON metadata)
-5. Updates database with processed questions
-6. Automatically resumes from where it left off after crashes
+1. **Migration**: Adds `processing_status` column on first run to track batch states
+2. **Crash Recovery**: Resets any stuck `processing` batches to `unprocessed` on startup
+3. **Parallel Workers**: Launches N async workers (default: 5) that run concurrently
+4. **Atomic Claiming**: Each worker atomically claims batches via database transactions
+5. **Processing**: Sends batches to Gemini 2.5 Flash API for question generation
+6. **Validation**: Checks uniqueness, non-empty options, and sanitizes invalid JSON metadata
+7. **Database Update**: Marks questions as `completed` with generated options
+8. **Graceful Shutdown**: Ctrl+C waits for workers to finish current batches
 
 ## Error Handling
 
-**Fatal errors (stops processing):**
-- Network errors
+**Fatal errors (stops all workers):**
 - Rate limits (429)
 - Server errors (5xx)
+- Network errors (ECONNREFUSED, ENOTFOUND)
 
 **Non-fatal errors (logs and continues):**
 - Invalid JSON responses
 - Validation failures
 - Partial batch responses
 
+Failed batches are marked as `unprocessed` and will be retried on next run.
+
 ## Performance
 
+**Sequential (1 worker):**
 - ~5,300 batches for full dataset (529,939 questions)
-- ~3-5 seconds per batch
-- Total time: 4-5 hours
+- ~5 seconds per batch (API call + processing)
+- **Total time: ~7.5 hours**
+
+**Parallel (5 workers, default):**
+- 5 workers × 3s delay = ~10 requests/minute
+- Stays safely under 15 RPM free tier limit
+- **Total time: ~53 minutes** (3.3x speedup)
+
+**Parallel (10 workers, paid tier):**
+- 10 workers × 6s delay = ~10 requests/minute (safe pacing)
+- **Total time: ~26 minutes** (17x speedup vs sequential)
+
+Rate limit formula: `requests_per_minute = (workers × 60) / delay_ms`
