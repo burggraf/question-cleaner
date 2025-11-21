@@ -6,3 +6,7 @@ node_modules/
 .DS_Store
 gemini-session/
 .worktrees/
+
+# Runtime logs
+processing.log
+failed-batches.log

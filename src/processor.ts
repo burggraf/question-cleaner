@@ -56,12 +56,16 @@ export class QuestionProcessor {
         // Process with Gemini
         const processed = await this.gemini.processBatch(batch);
 
-        // Validate response
+        // Validate response length
         if (processed.length !== batch.length) {
           throw new Error(`Expected ${batch.length} questions, got ${processed.length}`);
         }
 
-        const validationResult = this.validator.validateBatch(processed);
+        // Sanitize any invalid JSON metadata
+        const sanitized = this.validator.sanitizeBatch(processed);
+
+        // Validate sanitized data
+        const validationResult = this.validator.validateBatch(sanitized);
         if (!validationResult.valid) {
           this.logger.logValidationError(
             progress.getBatchNumber(),
@@ -72,7 +76,7 @@ export class QuestionProcessor {
           console.log(`${progress.getProgress()} - VALIDATION FAILED`);
         } else {
           // Update database
-          this.db.updateBatch(processed);
+          this.db.updateBatch(sanitized);
           progress.completeBatch(batch.length);
           console.log(progress.getProgress());
         }

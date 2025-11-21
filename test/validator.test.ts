@@ -98,4 +98,71 @@ describe('Validator', () => {
     };
     expect(validator.validate(valid)).toEqual({ valid: true });
   });
+
+  test('sanitizeBatch strips invalid JSON metadata', () => {
+    const batch: ProcessedQuestion[] = [
+      {
+        id: '1',
+        question: 'What is X?',
+        a: 'Answer A',
+        b: 'Answer B',
+        c: 'Answer C',
+        d: 'Answer D',
+        metadata: '{invalid json}',
+      },
+    ];
+    const sanitized = validator.sanitizeBatch(batch);
+    expect(sanitized[0].metadata).toBeUndefined();
+  });
+
+  test('sanitizeBatch preserves valid JSON metadata', () => {
+    const batch: ProcessedQuestion[] = [
+      {
+        id: '1',
+        question: 'What is X?',
+        a: 'Answer A',
+        b: 'Answer B',
+        c: 'Answer C',
+        d: 'Answer D',
+        metadata: '{"issue": "test"}',
+      },
+    ];
+    const sanitized = validator.sanitizeBatch(batch);
+    expect(sanitized[0].metadata).toBe('{"issue": "test"}');
+  });
+
+  test('sanitizeBatch handles mixed valid and invalid metadata', () => {
+    const batch: ProcessedQuestion[] = [
+      {
+        id: '1',
+        question: 'What is X?',
+        a: 'A1',
+        b: 'B1',
+        c: 'C1',
+        d: 'D1',
+        metadata: '{"valid": true}',
+      },
+      {
+        id: '2',
+        question: 'What is Y?',
+        a: 'A2',
+        b: 'B2',
+        c: 'C2',
+        d: 'D2',
+        metadata: '{invalid',
+      },
+      {
+        id: '3',
+        question: 'What is Z?',
+        a: 'A3',
+        b: 'B3',
+        c: 'C3',
+        d: 'D3',
+      },
+    ];
+    const sanitized = validator.sanitizeBatch(batch);
+    expect(sanitized[0].metadata).toBe('{"valid": true}');
+    expect(sanitized[1].metadata).toBeUndefined();
+    expect(sanitized[2].metadata).toBeUndefined();
+  });
 });

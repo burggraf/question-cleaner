@@ -6,6 +6,27 @@ export interface ValidationResult {
 }
 
 export class Validator {
+  /**
+   * Sanitizes a batch of questions by stripping invalid JSON metadata.
+   * This allows us to salvage batches with minor metadata issues.
+   */
+  sanitizeBatch(questions: ProcessedQuestion[]): ProcessedQuestion[] {
+    return questions.map(q => {
+      // If metadata exists, validate it's proper JSON
+      if (q.metadata) {
+        try {
+          JSON.parse(q.metadata);
+          // Valid JSON, keep it
+          return q;
+        } catch {
+          // Invalid JSON, strip it out
+          return { ...q, metadata: undefined };
+        }
+      }
+      return q;
+    });
+  }
+
   validate(question: ProcessedQuestion): ValidationResult {
     // Check uniqueness
     const options = [question.a, question.b, question.c, question.d];
@@ -21,7 +42,7 @@ export class Validator {
       }
     }
 
-    // Check metadata JSON
+    // Check metadata JSON (should already be sanitized)
     if (question.metadata) {
       try {
         JSON.parse(question.metadata);
