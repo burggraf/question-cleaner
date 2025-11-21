@@ -87,9 +87,16 @@ QUESTIONS:
       throw new Error(`Invalid response structure from Gemini API. Response: ${JSON.stringify(data)}`);
     }
 
-    const content = data.candidates[0].content;
+    const candidate = data.candidates[0];
+
+    // Check for blocked content or safety issues
+    if (candidate.finishReason && candidate.finishReason !== 'STOP') {
+      throw new Error(`Gemini API blocked response. Reason: ${candidate.finishReason}. Full candidate: ${JSON.stringify(candidate)}`);
+    }
+
+    const content = candidate.content;
     if (!content.parts || !content.parts[0] || !content.parts[0].text) {
-      throw new Error(`Invalid content structure from Gemini API. Content: ${JSON.stringify(content)}`);
+      throw new Error(`Invalid content structure from Gemini API. Full response: ${JSON.stringify(data)}`);
     }
 
     const text = content.parts[0].text;
