@@ -42,7 +42,7 @@ describe('Validator', () => {
     };
     const result = validator.validate(invalid);
     expect(result.valid).toBe(false);
-    expect(result.reason).toContain('empty');
+    expect(result.reason).toContain('Empty');
   });
 
   test('rejects whitespace-only options', () => {
@@ -56,7 +56,7 @@ describe('Validator', () => {
     };
     const result = validator.validate(invalid);
     expect(result.valid).toBe(false);
-    expect(result.reason).toContain('empty');
+    expect(result.reason).toContain('Empty');
   });
 
   test('validates JSON metadata', () => {
