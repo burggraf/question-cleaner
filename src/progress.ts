@@ -31,9 +31,11 @@ export class ProgressTracker {
   }
 
   getProgress(): string {
-    const percent = Math.round((this.stats.batchNumber / this.stats.totalBatches) * 100);
+    const percent = this.stats.totalBatches === 0 ? 100 :
+      Math.round((this.stats.batchNumber / this.stats.totalBatches) * 100);
     const elapsed = Date.now() - this.stats.startTime;
-    const avgTimePerBatch = elapsed / this.stats.batchNumber;
+    const avgTimePerBatch = this.stats.batchNumber === 0 ? 0 :
+      elapsed / this.stats.batchNumber;
     const remainingBatches = this.stats.totalBatches - this.stats.batchNumber;
     const etaMs = avgTimePerBatch * remainingBatches;
     const eta = this.formatTime(etaMs);
