@@ -2,6 +2,10 @@
   "name": "questions",
   "module": "index.ts",
   "type": "module",
+  "scripts": {
+    "start": "bun run index.ts",
+    "test": "bun test"
+  },
   "devDependencies": {
     "@types/bun": "latest",
     "typescript": "^5.9.3"
