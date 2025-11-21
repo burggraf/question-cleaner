@@ -46,6 +46,10 @@ export class ProgressTracker {
            `ETA: ${eta}`;
   }
 
+  getBatchNumber(): number {
+    return this.stats.batchNumber;
+  }
+
   private formatTime(ms: number): string {
     const seconds = Math.floor(ms / 1000);
     const minutes = Math.floor(seconds / 60);

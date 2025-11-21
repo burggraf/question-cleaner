@@ -50,7 +50,7 @@ export class QuestionProcessor {
       }
 
       const questionIds = batch.map(q => q.id);
-      this.logger.logBatch(progress['stats'].batchNumber, questionIds);
+      this.logger.logBatch(progress.getBatchNumber(), questionIds);
 
       try {
         // Process with Gemini
@@ -64,7 +64,7 @@ export class QuestionProcessor {
         const validationResult = this.validator.validateBatch(processed);
         if (!validationResult.valid) {
           this.logger.logValidationError(
-            progress['stats'].batchNumber,
+            progress.getBatchNumber(),
             questionIds,
             validationResult.reason!
           );
@@ -82,19 +82,19 @@ export class QuestionProcessor {
         // Check for fatal errors
         if (
           errorMessage.includes('429') ||
-          errorMessage.includes('5') && errorMessage.includes('status') ||
+          errorMessage.includes('status') && /5\d{2}/.test(errorMessage) ||
           errorMessage.includes('network') ||
           errorMessage.includes('ECONNREFUSED')
         ) {
           console.error(`\n\nFATAL ERROR: ${errorMessage}`);
           console.error('Stopping processing due to infrastructure issue.\n');
-          this.logger.logError(progress['stats'].batchNumber, questionIds, errorMessage);
+          this.logger.logError(progress.getBatchNumber(), questionIds, errorMessage);
           process.exit(1);
         }
 
         // Non-fatal error: log and continue
         this.logger.logError(
-          progress['stats'].batchNumber,
+          progress.getBatchNumber(),
           questionIds,
           errorMessage
         );
