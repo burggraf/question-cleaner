@@ -84,10 +84,15 @@ QUESTIONS:
     const data = await response.json();
 
     if (!data.candidates || !data.candidates[0] || !data.candidates[0].content) {
-      throw new Error('Invalid response structure from Gemini API');
+      throw new Error(`Invalid response structure from Gemini API. Response: ${JSON.stringify(data)}`);
     }
 
-    const text = data.candidates[0].content.parts[0].text;
+    const content = data.candidates[0].content;
+    if (!content.parts || !content.parts[0] || !content.parts[0].text) {
+      throw new Error(`Invalid content structure from Gemini API. Content: ${JSON.stringify(content)}`);
+    }
+
+    const text = content.parts[0].text;
     return this.parseResponse(text);
   }
 }
