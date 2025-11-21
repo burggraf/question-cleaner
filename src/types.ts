@@ -32,6 +32,7 @@ export interface Config {
   limit?: number;
   apiKey: string;
   delayMs: number;
+  workers: number;
 }
 
 export interface BatchStats {

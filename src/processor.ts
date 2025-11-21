@@ -4,17 +4,21 @@ import { GeminiClient } from './gemini';
 import { Validator } from './validator';
 import { ProgressTracker } from './progress';
 import { Logger } from './logger';
+import { migrateDatabase, resetStuckBatches } from './migrate';
 import type { Config } from './types';
 
 export class QuestionProcessor {
   private db: DatabaseClient;
+  private database: Database;
   private gemini: GeminiClient;
   private validator: Validator;
   private logger: Logger;
+  private progress: ProgressTracker | null = null;
+  private stopSignal: boolean = false;
 
   constructor(private config: Config) {
-    const database = new Database(config.dbPath);
-    this.db = new DatabaseClient(database);
+    this.database = new Database(config.dbPath);
+    this.db = new DatabaseClient(this.database);
     this.gemini = new GeminiClient(config.apiKey);
     this.validator = new Validator();
     this.logger = new Logger();
@@ -22,6 +26,14 @@ export class QuestionProcessor {
 
   async run(): Promise<void> {
     console.log('Initializing database...');
+
+    // Run migrations
+    migrateDatabase(this.database);
+
+    // Reset stuck batches from previous runs
+    resetStuckBatches(this.database);
+
+    // Create indexes
     this.db.createIndexes();
 
     const totalQuestions = this.db.getTotalQuestions();
@@ -29,28 +41,54 @@ export class QuestionProcessor {
 
     console.log(`Total questions: ${totalQuestions.toLocaleString()}`);
     console.log(`Unprocessed questions: ${unprocessedCount.toLocaleString()}`);
+    console.log(`Workers: ${this.config.workers}`);
+    console.log(`Batch size: ${this.config.batchSize}`);
+    console.log(`Delay between batches: ${this.config.delayMs}ms\n`);
 
     if (unprocessedCount === 0) {
       console.log('No questions to process!');
       return;
     }
 
-    const batchesToProcess = this.config.limit || Math.ceil(unprocessedCount / this.config.batchSize);
-    console.log(`Will process ${batchesToProcess} batches\n`);
+    this.progress = new ProgressTracker(
+      totalQuestions,
+      unprocessedCount,
+      this.config.batchSize,
+      this.config.workers
+    );
 
-    const progress = new ProgressTracker(totalQuestions, unprocessedCount, this.config.batchSize);
+    // Set up graceful shutdown handler
+    this.setupShutdownHandler();
 
-    for (let i = 0; i < batchesToProcess; i++) {
-      progress.startBatch();
+    // Launch workers in parallel
+    const workers = Array.from({ length: this.config.workers }, (_, i) =>
+      this.worker(i + 1)
+    );
 
-      const batch = this.db.getUnprocessedBatch(this.config.batchSize);
+    await Promise.all(workers);
+
+    console.log(this.progress.getSummary());
+    this.logger.logInfo('Processing complete');
+  }
+
+  private async worker(workerId: number): Promise<void> {
+    let batchesProcessed = 0;
+    const maxBatches = this.config.limit || Infinity;
+
+    while (!this.stopSignal && batchesProcessed < maxBatches) {
+      // Atomically claim a batch
+      const batch = this.db.claimBatch(this.config.batchSize);
+
       if (batch.length === 0) {
-        console.log('No more unprocessed questions');
+        // No more work available
         break;
       }
 
+      batchesProcessed++;
+      this.progress!.startBatch(workerId);
+
       const questionIds = batch.map(q => q.id);
-      this.logger.logBatch(progress.getBatchNumber(), questionIds);
+      this.logger.logBatch(this.progress!.getBatchNumber(), questionIds);
 
       try {
         // Process with Gemini
@@ -68,51 +106,76 @@ export class QuestionProcessor {
         const validationResult = this.validator.validateBatch(sanitized);
         if (!validationResult.valid) {
           this.logger.logValidationError(
-            progress.getBatchNumber(),
+            this.progress!.getBatchNumber(),
             questionIds,
             validationResult.reason!
           );
-          progress.failBatch();
-          console.log(`${progress.getProgress()} - VALIDATION FAILED`);
+          this.db.markBatchFailed(questionIds);
+          this.progress!.failBatch(workerId);
+          this.displayProgress();
         } else {
-          // Update database
-          this.db.updateBatch(sanitized);
-          progress.completeBatch(batch.length);
-          console.log(progress.getProgress());
+          // Update database with completed status
+          this.db.updateBatch(sanitized, 'completed');
+          this.progress!.completeBatch(workerId, batch.length);
+          this.displayProgress();
         }
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
 
         // Check for fatal errors
-        if (
-          errorMessage.includes('429') ||
-          errorMessage.includes('status') && /5\d{2}/.test(errorMessage) ||
-          errorMessage.includes('network') ||
-          errorMessage.includes('ECONNREFUSED')
-        ) {
-          console.error(`\n\nFATAL ERROR: ${errorMessage}`);
-          console.error('Stopping processing due to infrastructure issue.\n');
-          this.logger.logError(progress.getBatchNumber(), questionIds, errorMessage);
+        if (this.isFatalError(errorMessage)) {
+          console.error(`\n\nFATAL ERROR (Worker ${workerId}): ${errorMessage}`);
+          console.error('Stopping all workers due to infrastructure issue.\n');
+          this.logger.logError(this.progress!.getBatchNumber(), questionIds, errorMessage);
+          this.stopSignal = true;
           process.exit(1);
         }
 
         // Non-fatal error: log and continue
         this.logger.logError(
-          progress.getBatchNumber(),
+          this.progress!.getBatchNumber(),
           questionIds,
           errorMessage
         );
-        progress.failBatch();
-        console.log(`${progress.getProgress()} - ERROR: ${errorMessage}`);
+        this.db.markBatchFailed(questionIds);
+        this.progress!.failBatch(workerId);
+        this.displayProgress();
       }
 
       // Delay between batches
-      if (i < batchesToProcess - 1) {
-        await new Promise(resolve => setTimeout(resolve, this.config.delayMs));
-      }
+      await this.sleep(this.config.delayMs);
     }
+  }
 
-    console.log(progress.getSummary());
-    this.logger.logInfo('Processing complete');
+  private isFatalError(errorMessage: string): boolean {
+    return (
+      errorMessage.includes('429') ||
+      (errorMessage.includes('status') && /5\d{2}/.test(errorMessage)) ||
+      errorMessage.includes('network') ||
+      errorMessage.includes('ECONNREFUSED') ||
+      errorMessage.includes('ENOTFOUND')
+    );
+  }
+
+  private displayProgress(): void {
+    if (!this.progress) return;
+    const output = this.progress.getProgress();
+    if (output) {
+      // Clear previous lines and display new progress
+      process.stdout.write('\x1b[2K\r'); // Clear line
+      process.stdout.write(output);
+    }
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  private setupShutdownHandler(): void {
+    process.on('SIGINT', () => {
+      console.log('\n\nReceived SIGINT, gracefully shutting down...');
+      console.log('Waiting for workers to finish current batches...\n');
+      this.stopSignal = true;
+    });
   }
 }

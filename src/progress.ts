@@ -1,12 +1,22 @@
 import type { BatchStats } from './types';
 
+interface WorkerStats {
+  completed: number;
+  failed: number;
+  questionsProcessed: number;
+}
+
 export class ProgressTracker {
   private stats: BatchStats;
+  private workerStats: Map<number, WorkerStats>;
+  private lastDisplayTime: number = 0;
+  private displayThrottleMs: number = 1000; // Only update display once per second
 
   constructor(
     totalQuestions: number,
     unprocessedCount: number,
-    batchSize: number
+    batchSize: number,
+    workerCount: number
   ) {
     this.stats = {
       batchNumber: 0,
@@ -16,34 +26,59 @@ export class ProgressTracker {
       failedBatches: 0,
       startTime: Date.now(),
     };
+
+    // Initialize per-worker stats
+    this.workerStats = new Map();
+    for (let i = 1; i <= workerCount; i++) {
+      this.workerStats.set(i, { completed: 0, failed: 0, questionsProcessed: 0 });
+    }
   }
 
-  startBatch(): void {
+  startBatch(workerId: number): void {
     this.stats.batchNumber++;
   }
 
-  completeBatch(questionsInBatch: number): void {
+  completeBatch(workerId: number, questionsInBatch: number): void {
     this.stats.questionsProcessed += questionsInBatch;
+    const workerStat = this.workerStats.get(workerId)!;
+    workerStat.completed++;
+    workerStat.questionsProcessed += questionsInBatch;
   }
 
-  failBatch(): void {
+  failBatch(workerId: number): void {
     this.stats.failedBatches++;
+    const workerStat = this.workerStats.get(workerId)!;
+    workerStat.failed++;
   }
 
-  getProgress(): string {
+  getProgress(force: boolean = false): string | null {
+    // Throttle display updates to avoid spam
+    const now = Date.now();
+    if (!force && now - this.lastDisplayTime < this.displayThrottleMs) {
+      return null;
+    }
+    this.lastDisplayTime = now;
+
     const percent = this.stats.totalBatches === 0 ? 100 :
       Math.round((this.stats.batchNumber / this.stats.totalBatches) * 100);
-    const elapsed = Date.now() - this.stats.startTime;
+    const elapsed = now - this.stats.startTime;
     const avgTimePerBatch = this.stats.batchNumber === 0 ? 0 :
       elapsed / this.stats.batchNumber;
     const remainingBatches = this.stats.totalBatches - this.stats.batchNumber;
     const etaMs = avgTimePerBatch * remainingBatches;
     const eta = this.formatTime(etaMs);
 
-    return `Batch ${this.stats.batchNumber}/${this.stats.totalBatches} (${percent}%) | ` +
-           `${this.stats.questionsProcessed.toLocaleString()}/${this.stats.totalQuestions.toLocaleString()} questions | ` +
-           `${this.stats.failedBatches} failed | ` +
-           `ETA: ${eta}`;
+    let output = `Progress: ${this.stats.questionsProcessed.toLocaleString()}/${this.stats.totalQuestions.toLocaleString()} (${percent}%) | `;
+    output += `Batches: ${this.stats.batchNumber}/${this.stats.totalBatches} | `;
+    output += `Failed: ${this.stats.failedBatches} | `;
+    output += `ETA: ${eta}\n`;
+
+    // Add per-worker breakdown
+    this.workerStats.forEach((stats, id) => {
+      output += `  Worker ${id}: ${stats.questionsProcessed} questions (${stats.completed} batches, ${stats.failed} failed)\n`;
+    });
+
+    return output;
   }
 
   getBatchNumber(): number {
@@ -66,9 +101,14 @@ export class ProgressTracker {
 
   getSummary(): string {
     const elapsed = this.formatTime(Date.now() - this.stats.startTime);
-    return `\nProcessing complete!\n` +
-           `Processed: ${this.stats.questionsProcessed.toLocaleString()} questions\n` +
-           `Failed batches: ${this.stats.failedBatches}\n` +
-           `Time: ${elapsed}`;
+    let output = `\nProcessing complete!\n`;
+    output += `Processed: ${this.stats.questionsProcessed.toLocaleString()} questions\n`;
+    output += `Failed batches: ${this.stats.failedBatches}\n`;
+    output += `Time: ${elapsed}\n\n`;
+    output += `Per-worker stats:\n`;
+    this.workerStats.forEach((stats, id) => {
+      output += `  Worker ${id}: ${stats.questionsProcessed} questions (${stats.completed} batches, ${stats.failed} failed)\n`;
+    });
+    return output;
   }
 }

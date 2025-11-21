@@ -11,7 +11,8 @@ export function parseConfig(): Config {
     dbPath: './jeopardy.db',
     batchSize: 100,
     apiKey,
-    delayMs: 2000,
+    delayMs: 3000,
+    workers: 5,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -23,6 +24,12 @@ export function parseConfig(): Config {
       i++;
     } else if (args[i] === '--limit' && args[i + 1]) {
       config.limit = parseInt(args[i + 1], 10);
+      i++;
+    } else if (args[i] === '--workers' && args[i + 1]) {
+      config.workers = parseInt(args[i + 1], 10);
+      i++;
+    } else if (args[i] === '--delay' && args[i + 1]) {
+      config.delayMs = parseInt(args[i + 1], 10);
       i++;
     }
   }
@@ -36,6 +43,12 @@ export function parseConfig(): Config {
   }
   if (!config.dbPath || config.dbPath.trim().length === 0) {
     throw new Error('--db path cannot be empty');
+  }
+  if (isNaN(config.workers) || config.workers <= 0) {
+    throw new Error('--workers must be a positive number');
+  }
+  if (isNaN(config.delayMs) || config.delayMs < 0) {
+    throw new Error('--delay must be a non-negative number');
   }
 
   return config;
