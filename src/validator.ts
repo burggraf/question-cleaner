@@ -17,7 +17,7 @@ export class Validator {
     // Check non-empty
     for (const option of options) {
       if (!option || option.trim().length === 0) {
-        return { valid: false, reason: `empty option found for question ${question.id}` };
+        return { valid: false, reason: `Empty option found for question ${question.id}` };
       }
     }
 
