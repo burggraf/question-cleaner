@@ -27,5 +27,16 @@ export function parseConfig(): Config {
     }
   }
 
+  // Validate parsed configuration
+  if (isNaN(config.batchSize) || config.batchSize <= 0) {
+    throw new Error('--batch-size must be a positive number');
+  }
+  if (config.limit !== undefined && (isNaN(config.limit) || config.limit <= 0)) {
+    throw new Error('--limit must be a positive number');
+  }
+  if (!config.dbPath || config.dbPath.trim().length === 0) {
+    throw new Error('--db path cannot be empty');
+  }
+
   return config;
 }
