@@ -1,131 +1,78 @@
-# Trivia Question Validator
+# Jeopardy Questions Processor
 
-Validates trivia questions in SQLite database using the `gemini` CLI command.
-
-## Prerequisites
-
-- **Bun** runtime installed
-- **`gemini` CLI** command available (uses your Gemini Pro subscription)
+Transforms Jeopardy questions into multiple-choice format using Gemini 2.0 Flash API.
 
 ## Setup
 
-### 1. Install Dependencies
+1. Install dependencies:
+   ```bash
+   bun install
+   ```
 
-```bash
-bun install
-```
+2. Set your Gemini API key:
+   ```bash
+   export GEMINI_API_KEY='your-api-key'
+   ```
 
-### 2. Verify Gemini CLI Works
-
-Test that the `gemini` command works:
-
-```bash
-gemini -p "Hello"
-```
-
-If this works, you're all set! The tool will use this same command.
+3. Make sure `jeopardy.db` is in the project root
 
 ## Usage
 
-### Single Worker
-
+Process all questions:
 ```bash
-bun run validate-questions.ts
+bun start
 ```
 
-### Parallel Processing (Recommended)
-
-For faster processing, run multiple workers in parallel:
-
+Test with first 10 batches (1000 questions):
 ```bash
-# Run 3 workers in parallel (recommended for 4-core machines)
-bun run validate-questions.ts --worker-id=1 &
-bun run validate-questions.ts --worker-id=2 &
-bun run validate-questions.ts --worker-id=3 &
+bun start --limit 10
 ```
 
-Each worker will:
-1. Test the `gemini` CLI is working
-2. Connect to the SQLite database
-3. Atomically claim batches of 25 questions (no collision)
-4. Process each batch using `gemini -p "<prompt>"`
-5. Update the `metadata` field with validation results
-6. Show progress after each batch
-
-### Recovery from Interruptions
-
-If workers are interrupted (Ctrl+C, crash, etc.), questions may be stuck in `PROCESSING` state. Use the `--reclaim` flag to reset them:
-
+Custom database path:
 ```bash
-bun run validate-questions.ts --reclaim
+bun start --db /path/to/database.db
 ```
 
-This will mark all `PROCESSING` questions as unprocessed so they can be claimed again.
-
-## Database Schema
-
-Expects SQLite database `questions.db` with table:
-
-```sql
-CREATE TABLE questions (
-  id TEXT PRIMARY KEY,
-  question TEXT,
-  answer_a TEXT,
-  answer_b TEXT,
-  answer_c TEXT,
-  answer_d TEXT,
-  category TEXT,
-  subcategory TEXT,
-  difficulty TEXT,
-  metadata TEXT
-);
+Custom batch size:
+```bash
+bun start --batch-size 50
 ```
 
-## Validation Tags
+## Testing
 
-- `OK` - Question is valid
-- `INCORRECT` - Answer is wrong
-- `AMBIGUOUS` - Question is too ambiguous
-- `INCOMPLETE` - Question is incomplete
-- `UNCLEAR` - Question is unclear
-- `OBVIOUS` - Answer is in the question
-- `OVERDETAILED-ANSWER` - Correct answer has too much detail
-
-Multiple tags can appear space-separated.
-
-## Output
-
+Run all tests:
+```bash
+bun test
 ```
-Trivia Question Validator (Using Gemini CLI)
 
-Testing Gemini CLI...
-Gemini CLI is working!
+## Logs
 
-Opening database...
-Found 61251 questions to validate
+- `processing.log` - All processing activity with timestamps
+- `failed-batches.log` - Details of failed batches for manual review
 
-Processed 1/61251 questions
-Processed 2/61251 questions
-Processed 3/61251 questions
-...
-```
+## How It Works
+
+1. Queries database for questions with empty b, c, d fields
+2. Processes in batches of 100 questions
+3. Sends each batch to Gemini 2.0 Flash API
+4. Validates responses (unique options, no empties, valid JSON metadata)
+5. Updates database with processed questions
+6. Automatically resumes from where it left off after crashes
+
+## Error Handling
+
+**Fatal errors (stops processing):**
+- Network errors
+- Rate limits (429)
+- Server errors (5xx)
+
+**Non-fatal errors (logs and continues):**
+- Invalid JSON responses
+- Validation failures
+- Partial batch responses
 
 ## Performance
 
-- **Speed:** ~1.7 seconds per question with batch processing (25 questions per CLI call)
-- **Parallel Processing:** 3-4 workers can reduce total time from 29 hours to ~7-10 hours
-- **Cost:** Uses your Gemini Pro subscription (no additional API costs)
-- **Safe to interrupt:** Press Ctrl+C anytime and resume later (use `--reclaim` to reset stuck questions)
-- **Progress saved:** Each batch is saved immediately after validation
-- **No collisions:** Workers atomically claim batches using database transactions
-
-## Troubleshooting
-
-### "Failed to run Gemini CLI: command not found"
-The `gemini` command is not in your PATH. Make sure it's installed and accessible.
-
-### "Database file not found"
-Ensure `questions.db` exists in the current directory where you're running the command.
-
-### Gemini CLI returns errors
-Check that your Gemini Pro subscription is active and you're logged in to the CLI.
+- ~5,300 batches for full dataset (529,939 questions)
+- ~3-5 seconds per batch
+- Total time: 4-5 hours
