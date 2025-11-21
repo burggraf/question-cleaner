@@ -30,7 +30,7 @@ export interface Config {
   dbPath: string;
   batchSize: number;
   limit?: number;
-  apiKey: string;
+  apiKeys: string[];
   delayMs: number;
   workers: number;
 }

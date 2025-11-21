@@ -2,8 +2,41 @@ import type { Question, ProcessedQuestion } from './types';
 
 export class GeminiClient {
   private apiUrl = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
+  private apiKeys: string[];
+  private currentKeyIndex: number = 0;
+  private readonly KEY_ROTATION_DELAY_MS = 5000; // 5 seconds
 
-  constructor(private apiKey: string) {}
+  constructor(apiKeys: string[]) {
+    this.apiKeys = apiKeys;
+  }
+
+  /**
+   * Rotates to the next API key with a 5-second delay.
+   * Returns true if rotation was successful, false if all keys exhausted.
+   */
+  async rotateKey(): Promise<boolean> {
+    if (this.apiKeys.length === 1) {
+      // Only one key, can't rotate
+      return false;
+    }
+
+    const oldIndex = this.currentKeyIndex;
+    this.currentKeyIndex = (this.currentKeyIndex + 1) % this.apiKeys.length;
+
+    console.log(`\nRotating API key: ${oldIndex + 1} -> ${this.currentKeyIndex + 1} (of ${this.apiKeys.length})`);
+    console.log(`Waiting ${this.KEY_ROTATION_DELAY_MS / 1000} seconds before continuing...\n`);
+
+    await new Promise(resolve => setTimeout(resolve, this.KEY_ROTATION_DELAY_MS));
+    return true;
+  }
+
+  getCurrentKey(): string {
+    return this.apiKeys[this.currentKeyIndex];
+  }
+
+  getKeyCount(): number {
+    return this.apiKeys.length;
+  }
 
   buildPrompt(questions: Question[]): string {
     const systemPrompt = `You are a quiz question formatter. Convert Jeopardy-style clues into proper multiple-choice questions.
@@ -62,7 +95,7 @@ QUESTIONS:
   async processBatch(questions: Question[]): Promise<ProcessedQuestion[]> {
     const prompt = this.buildPrompt(questions);
 
-    const response = await fetch(`${this.apiUrl}?key=${this.apiKey}`, {
+    const response = await fetch(`${this.apiUrl}?key=${this.getCurrentKey()}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

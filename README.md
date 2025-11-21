@@ -9,9 +9,16 @@ Transforms Jeopardy questions into multiple-choice format using Gemini 2.5 Flash
    bun install
    ```
 
-2. Set your Gemini API key:
+2. Set your Gemini API key(s):
+
+   **Single key:**
    ```bash
    export GEMINI_API_KEY='your-api-key'
+   ```
+
+   **Multiple keys (for automatic rotation on quota limits):**
+   ```bash
+   export GEMINI_API_KEY='key1,key2,key3'
    ```
 
 3. Make sure `jeopardy.db` is in the project root
@@ -68,8 +75,16 @@ bun test
 
 ## Error Handling
 
+**Automatic recovery with key rotation:**
+- **429 Quota Exceeded**: Automatically rotates to next API key (if multiple keys provided) with 5-second delay
+
+**Automatic retry with backoff:**
+- **503 Service Unavailable**: Pauses for 30 seconds and retries up to 10 times before stopping
+
 **Fatal errors (stops all workers):**
-- Rate limits (429)
+- 429 quota exceeded with no additional keys available
+- 10 consecutive 503 errors
+- Other rate limits (429)
 - Server errors (5xx)
 - Network errors (ECONNREFUSED, ENOTFOUND)
 

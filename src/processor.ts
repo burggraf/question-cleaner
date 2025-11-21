@@ -22,7 +22,7 @@ export class QuestionProcessor {
   constructor(private config: Config) {
     this.database = new Database(config.dbPath);
     this.db = new DatabaseClient(this.database);
-    this.gemini = new GeminiClient(config.apiKey);
+    this.gemini = new GeminiClient(config.apiKeys);
     this.validator = new Validator();
     this.logger = new Logger();
   }
@@ -46,7 +46,8 @@ export class QuestionProcessor {
     console.log(`Unprocessed questions: ${unprocessedCount.toLocaleString()}`);
     console.log(`Workers: ${this.config.workers}`);
     console.log(`Batch size: ${this.config.batchSize}`);
-    console.log(`Delay between batches: ${this.config.delayMs}ms\n`);
+    console.log(`Delay between batches: ${this.config.delayMs}ms`);
+    console.log(`API keys loaded: ${this.gemini.getKeyCount()}\n`);
 
     if (unprocessedCount === 0) {
       console.log('No questions to process!');
@@ -128,6 +129,35 @@ export class QuestionProcessor {
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
 
+        // Check for 429 Quota Exceeded
+        if (errorMessage.includes('429') && errorMessage.toLowerCase().includes('quota')) {
+          console.log(`\n\nWarning (Worker ${workerId}): API quota exceeded (429). Attempting key rotation...\n`);
+          this.logger.logError(this.progress!.getBatchNumber(), questionIds, errorMessage);
+
+          // Try to rotate to next API key
+          const rotated = await this.gemini.rotateKey();
+
+          if (rotated) {
+            // Successfully rotated, mark batch as unprocessed and continue
+            // This batch will be picked up again later
+            this.db.markBatchFailed(questionIds);
+            this.progress!.failBatch(workerId);
+            this.displayProgress();
+
+            // Don't count this batch toward our limit
+            batchesProcessed--;
+
+            // Continue to next batch (skip normal delay since we already waited during rotation)
+            continue;
+          } else {
+            // Only one key available, can't rotate
+            console.error(`\n\nFATAL ERROR (Worker ${workerId}): API quota exceeded and no additional keys available for rotation.\n`);
+            console.error('Add more API keys to GEMINI_API_KEY (comma-separated) to enable rotation.\n');
+            this.stopSignal = true;
+            process.exit(1);
+          }
+        }
+
         // Check for 503 Service Unavailable (model overloaded)
         if (errorMessage.includes('503')) {
           this.consecutive503Errors++;
@@ -180,6 +210,12 @@ export class QuestionProcessor {
   private isFatalError(errorMessage: string): boolean {
     // 503 errors are handled separately with retry logic
     if (errorMessage.includes('503')) {
+      return false;
+    }
+
+    // 429 quota errors are handled separately with key rotation
+    // This will catch other 429 errors (rate limits, etc)
+    if (errorMessage.includes('429') && errorMessage.toLowerCase().includes('quota')) {
       return false;
     }
 

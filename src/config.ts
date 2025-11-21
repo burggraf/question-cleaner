@@ -1,16 +1,22 @@
 import { Config } from './types';
 
 export function parseConfig(): Config {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
+  const apiKeyEnv = process.env.GEMINI_API_KEY;
+  if (!apiKeyEnv) {
     throw new Error('GEMINI_API_KEY environment variable is required');
+  }
+
+  // Parse comma-separated API keys
+  const apiKeys = apiKeyEnv.split(',').map(key => key.trim()).filter(key => key.length > 0);
+  if (apiKeys.length === 0) {
+    throw new Error('GEMINI_API_KEY must contain at least one valid API key');
   }
 
   const args = process.argv.slice(2);
   const config: Config = {
     dbPath: './jeopardy.db',
     batchSize: 100,
-    apiKey,
+    apiKeys,
     delayMs: 3000,
     workers: 5,
   };

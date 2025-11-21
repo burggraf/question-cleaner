@@ -10,3 +10,4 @@ gemini-session/
 # Runtime logs
 processing.log
 failed-batches.log
+jeopardy.db-journal
