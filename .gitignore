@@ -13,3 +13,4 @@ failed-batches.log
 jeopardy.db-journal
 .env
 backups
+.keys
