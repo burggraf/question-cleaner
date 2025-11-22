@@ -11,3 +11,4 @@ gemini-session/
 processing.log
 failed-batches.log
 jeopardy.db-journal
+.env
