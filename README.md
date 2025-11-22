@@ -11,15 +11,29 @@ Transforms Jeopardy questions into multiple-choice format using Gemini 2.5 Flash
 
 2. Set your Gemini API key(s):
 
-   **Single key:**
+   **Option A: Using .keys file (recommended for multiple keys):**
+
+   Create a `.keys` file in the project root with one API key per line:
+   ```
+   AIzaSyAYO2P5AI1jiSYSxW9rq0V4OoBIOz_dOzs
+   AIzaSyBXYZ123456789abcdefghijklmnopqr
+   AIzaSyC987654321zyxwvutsrqponmlkjihg
+   ```
+
+   Lines starting with `#` are treated as comments and ignored.
+   The `.keys` file is already in `.gitignore` for security.
+
+   **Option B: Environment variable (single key):**
    ```bash
    export GEMINI_API_KEY='your-api-key'
    ```
 
-   **Multiple keys (for automatic rotation on quota limits):**
+   **Option C: Environment variable (multiple keys, comma-separated):**
    ```bash
    export GEMINI_API_KEY='key1,key2,key3'
    ```
+
+   **Note:** If `.keys` file exists, it will be used instead of the environment variable.
 
 3. Make sure `jeopardy.db` is in the project root
 

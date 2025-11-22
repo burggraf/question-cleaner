@@ -1,15 +1,36 @@
 import { Config } from './types';
+import { existsSync, readFileSync } from 'fs';
+import { resolve } from 'path';
 
 export function parseConfig(): Config {
-  const apiKeyEnv = process.env.GEMINI_API_KEY;
-  if (!apiKeyEnv) {
-    throw new Error('GEMINI_API_KEY environment variable is required');
-  }
+  let apiKeys: string[] = [];
 
-  // Parse comma-separated API keys
-  const apiKeys = apiKeyEnv.split(',').map(key => key.trim()).filter(key => key.length > 0);
-  if (apiKeys.length === 0) {
-    throw new Error('GEMINI_API_KEY must contain at least one valid API key');
+  // Check for .keys file first
+  const keysFilePath = resolve('.keys');
+  if (existsSync(keysFilePath)) {
+    console.log('Loading API keys from .keys file...');
+    const fileContent = readFileSync(keysFilePath, 'utf-8');
+    apiKeys = fileContent
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line.length > 0 && !line.startsWith('#')); // Remove blank lines and comments
+
+    if (apiKeys.length === 0) {
+      throw new Error('.keys file exists but contains no valid API keys');
+    }
+    console.log(`Loaded ${apiKeys.length} API key(s) from .keys file\n`);
+  } else {
+    // Fall back to environment variable
+    const apiKeyEnv = process.env.GEMINI_API_KEY;
+    if (!apiKeyEnv) {
+      throw new Error('GEMINI_API_KEY environment variable is required (or create a .keys file with one key per line)');
+    }
+
+    // Parse comma-separated API keys
+    apiKeys = apiKeyEnv.split(',').map(key => key.trim()).filter(key => key.length > 0);
+    if (apiKeys.length === 0) {
+      throw new Error('GEMINI_API_KEY must contain at least one valid API key');
+    }
   }
 
   const args = process.argv.slice(2);
