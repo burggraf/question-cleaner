@@ -76,13 +76,13 @@ bun test
 ## Error Handling
 
 **Automatic recovery with key rotation:**
-- **429 Quota Exceeded**: Automatically rotates to next API key (if multiple keys provided) with 5-second delay
+- **429 Quota Exceeded**: Marks current key as exhausted (permanently removed from rotation), automatically switches to next available key with 5-second delay. Continues until all keys are exhausted.
 
 **Automatic retry with backoff:**
 - **503 Service Unavailable**: Pauses for 30 seconds and retries up to 10 times before stopping
 
 **Fatal errors (stops all workers):**
-- 429 quota exceeded with no additional keys available
+- All API keys exhausted (all keys hit quota limits)
 - 10 consecutive 503 errors
 - Other rate limits (429)
 - Server errors (5xx)

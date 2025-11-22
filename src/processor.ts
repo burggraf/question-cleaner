@@ -131,10 +131,23 @@ export class QuestionProcessor {
 
         // Check for 429 Quota Exceeded
         if (errorMessage.includes('429') && errorMessage.toLowerCase().includes('quota')) {
-          console.log(`\n\nWarning (Worker ${workerId}): API quota exceeded (429). Attempting key rotation...\n`);
+          console.log(`\n\nWarning (Worker ${workerId}): API quota exceeded (429).\n`);
           this.logger.logError(this.progress!.getBatchNumber(), questionIds, errorMessage);
 
-          // Try to rotate to next API key
+          // Mark current key as exhausted (permanently remove from rotation)
+          this.gemini.markKeyExhausted();
+
+          // Check if any keys are still available
+          if (!this.gemini.hasAvailableKeys()) {
+            // All keys exhausted
+            console.error(`\n\nFATAL ERROR (Worker ${workerId}): All API keys have been exhausted (quota exceeded).\n`);
+            console.error(`Total keys tried: ${this.gemini.getKeyCount()}\n`);
+            console.error('All keys have hit their quota limits. Please wait for quotas to reset or add more keys.\n');
+            this.stopSignal = true;
+            process.exit(1);
+          }
+
+          // Try to rotate to next available (non-exhausted) key
           const rotated = await this.gemini.rotateKey();
 
           if (rotated) {
@@ -150,9 +163,8 @@ export class QuestionProcessor {
             // Continue to next batch (skip normal delay since we already waited during rotation)
             continue;
           } else {
-            // Only one key available, can't rotate
-            console.error(`\n\nFATAL ERROR (Worker ${workerId}): API quota exceeded and no additional keys available for rotation.\n`);
-            console.error('Add more API keys to GEMINI_API_KEY (comma-separated) to enable rotation.\n');
+            // Shouldn't happen since we checked hasAvailableKeys(), but handle anyway
+            console.error(`\n\nFATAL ERROR (Worker ${workerId}): Failed to rotate to next API key.\n`);
             this.stopSignal = true;
             process.exit(1);
           }

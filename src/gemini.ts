@@ -4,6 +4,7 @@ export class GeminiClient {
   private apiUrl = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
   private apiKeys: string[];
   private currentKeyIndex: number = 0;
+  private exhaustedKeys: Set<number> = new Set();
   private readonly KEY_ROTATION_DELAY_MS = 5000; // 5 seconds
 
   constructor(apiKeys: string[]) {
@@ -11,18 +12,47 @@ export class GeminiClient {
   }
 
   /**
-   * Rotates to the next API key with a 5-second delay.
+   * Marks the current API key as exhausted (quota exceeded).
+   * This key will be skipped in future rotations.
+   */
+  markKeyExhausted(): void {
+    this.exhaustedKeys.add(this.currentKeyIndex);
+    console.log(`\nAPI key ${this.currentKeyIndex + 1} marked as exhausted (quota exceeded)`);
+    console.log(`Remaining keys: ${this.apiKeys.length - this.exhaustedKeys.size}/${this.apiKeys.length}\n`);
+  }
+
+  /**
+   * Checks if there are any non-exhausted keys available.
+   */
+  hasAvailableKeys(): boolean {
+    return this.exhaustedKeys.size < this.apiKeys.length;
+  }
+
+  /**
+   * Rotates to the next available (non-exhausted) API key with a 5-second delay.
    * Returns true if rotation was successful, false if all keys exhausted.
    */
   async rotateKey(): Promise<boolean> {
-    if (this.apiKeys.length === 1) {
-      // Only one key, can't rotate
+    // Check if all keys are exhausted
+    if (this.exhaustedKeys.size >= this.apiKeys.length) {
       return false;
     }
 
-    const oldIndex = this.currentKeyIndex;
-    this.currentKeyIndex = (this.currentKeyIndex + 1) % this.apiKeys.length;
+    // Find next non-exhausted key
+    const startIndex = this.currentKeyIndex;
+    let attempts = 0;
 
+    do {
+      this.currentKeyIndex = (this.currentKeyIndex + 1) % this.apiKeys.length;
+      attempts++;
+
+      // If we've checked all keys and none are available
+      if (attempts > this.apiKeys.length) {
+        return false;
+      }
+    } while (this.exhaustedKeys.has(this.currentKeyIndex));
+
+    const oldIndex = startIndex;
     console.log(`\nRotating API key: ${oldIndex + 1} -> ${this.currentKeyIndex + 1} (of ${this.apiKeys.length})`);
     console.log(`Waiting ${this.KEY_ROTATION_DELAY_MS / 1000} seconds before continuing...\n`);
 
@@ -36,6 +66,10 @@ export class GeminiClient {
 
   getKeyCount(): number {
     return this.apiKeys.length;
+  }
+
+  getAvailableKeyCount(): number {
+    return this.apiKeys.length - this.exhaustedKeys.size;
   }
 
   buildPrompt(questions: Question[]): string {
