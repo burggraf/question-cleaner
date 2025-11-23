@@ -14,3 +14,4 @@ jeopardy.db-journal
 .env
 backups
 .keys
+cleanup-questions.log
